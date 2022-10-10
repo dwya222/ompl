@@ -51,6 +51,8 @@ set(Boost_USE_MULTITHREADED ON)
 set(Boost_NO_BOOST_CMAKE ON)
 find_package(Boost 1.58 QUIET REQUIRED COMPONENTS serialization filesystem system program_options)
 include_directories(SYSTEM ${Boost_INCLUDE_DIR})
+find_package(catkin REQUIRED COMPONENTS roscpp)
+include_directories(${catkin_INCLUDE_DIRS})
 
 # Add support in Boost::Python for std::shared_ptr
 # This is a hack that replaces boost::shared_ptr related code with std::shared_ptr.

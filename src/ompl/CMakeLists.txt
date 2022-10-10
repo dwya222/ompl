@@ -59,7 +59,8 @@ target_link_libraries(ompl
     ${Boost_SERIALIZATION_LIBRARY}
     ${Boost_FILESYSTEM_LIBRARY}
     ${Boost_SYSTEM_LIBRARY}
-    ${CMAKE_THREAD_LIBS_INIT})
+    ${CMAKE_THREAD_LIBS_INIT}
+    ${catkin_LIBRARIES})
 
 if (OMPL_EXTENSION_ODE)
     if (NOT CMAKE_VERSION VERSION_LESS 3.13)

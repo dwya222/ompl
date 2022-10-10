@@ -39,6 +39,7 @@
 #include <boost/math/constants/constants.hpp>
 #include <limits>
 #include <vector>
+#include <iostream>
 #include "ompl/base/Goal.h"
 #include "ompl/base/goals/GoalSampleableRegion.h"
 #include "ompl/base/goals/GoalState.h"
@@ -48,6 +49,11 @@
 #include "ompl/base/samplers/informed/OrderedInfSampler.h"
 #include "ompl/tools/config/SelfConfig.h"
 #include "ompl/util/GeometricEquations.h"
+#include "ompl/base/spaces/RealVectorStateSpace.h"
+#include "ompl/base/goals/GoalState.h"
+#include "ompl/base/goals/GoalStates.h"
+
+#include <ros/ros.h>
 
 ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
   : base::Planner(si, "RRTstar")
@@ -244,22 +250,89 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     // our functor for sorting nearest neighbors
     CostIndexCompare compareFn(costs, *opt_);
 
+    // flag for when a motion needs to be checked
+    // TODO: need to change the flag when an obstacle is moved/the scene is updated
+    bool check_flag = true;
+    int iter_var = 0;
+    ros::Time start_planning_time = ros::Time::now();
+
     while (ptc == false)
     {
         iterations_++;
+        // If we have a path to goal, and our check_flag is true, then check that the path(s) to goal are collision free
+        if (!goalMotions_.empty() && check_flag)
+        {
+          for (std::vector<Motion*>::iterator it = goalMotions_.begin(); it != goalMotions_.end(); it++)
+          {
+            Motion* check_motion = *it;
+            if (!si_->checkMotion(check_motion->state, check_motion->parent->state))
+            {
+              OMPL_WARN("Motion in goal Motions found to be invalid, removing");
+              check_motion->cost = base::Cost(std::numeric_limits<double>::max());
+              check_motion->valid = false;
+              nn_->remove(check_motion);
+              goalMotions_.erase(it);
+            }
+            check_motion = check_motion->parent;
+            while (check_motion->parent)
+            {
+              if (!si_->checkMotion(check_motion->state, check_motion->parent->state))
+              {
+                check_motion->cost = base::Cost(std::numeric_limits<double>::max());
+                check_motion->valid = false;
+                nn_->remove(check_motion);
+              }
+              check_motion = check_motion->parent;
+            }
+            if (it == goalMotions_.end())
+            {
+              break;
+            }
+          }
+          // If the best motion is not valid anymore then change it to a nullptr
+          if (bestGoalMotion_ && !bestGoalMotion_->valid)
+            bestGoalMotion_ = nullptr;
+        }
+
 
         // sample random state (with goal biasing)
         // Goal samples are only sampled until maxSampleCount() goals are in the tree, to prohibit duplicate goal
         // states.
         if (goal_s && goalMotions_.size() < goal_s->maxSampleCount() && rng_.uniform01() < goalBias_ &&
             goal_s->canSample())
+        {
             goal_s->sampleGoal(rstate);
+        }
         else
         {
             // Attempt to generate a sample, if we fail (e.g., too many rejection attempts), skip the remainder of this
             // loop and return to try again
             if (!sampleUniform(rstate))
                 continue;
+        }
+
+        /* if (ros::Time::now() - start_planning_time > ros::Duration(2.0)) */
+        if (iter_var < 1)
+        {
+          /* goal->print(std::cout); */
+          /* auto *test_goal = dynamic_cast<base::GoalState *>(pdef_->goal_.get()); */
+          /* auto *test_goal_state = const_cast<base::State *>(test_goal->getState()); */
+          std::vector<const base::State *> input_states;
+          pdef_->getInputStates(input_states);
+          for (int j=0; j < input_states.size(); j++)
+          {
+            for (int i=0; i<8; i++)
+            {
+              OMPL_INFORM("input state #%d, state[%d]: '%f'", j, i,
+                          input_states[j]->as<base::RealVectorStateSpace::StateType>()->values[i]);
+            }
+          }
+            /* base::Goal *goal = pdef_->getGoal().get(); */
+            /* auto *goal_s = dynamic_cast<base::GoalSampleableRegion *>(goal); */
+          /* pdef_->setGoalState(gstate); */
+          iter_var++;
+          /* delete test_goal; */
+          /* delete test_goal_state; */
         }
 
         // find closest state in the tree
@@ -462,6 +535,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             {
                 motion->inGoal = true;
                 goalMotions_.push_back(motion);
+                OMPL_INFORM("DWY: adding to goalMotions_. New goalMotions_ size: '%d'", goalMotions_.size());
                 checkForSolution = true;
             }
 
@@ -505,6 +579,11 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
 
                 if (updatedSolution)
                 {
+                  OMPL_INFORM("Updated solution: outputting bestGoalMotion_->state");
+                  for (int i=0; i<8; i++)
+                  {
+                    OMPL_INFORM("rstate[%d]: '%f'", i, bestGoalMotion_->state->as<base::RealVectorStateSpace::StateType>()->values[i]);
+                  }
                     if (useTreePruning_)
                     {
                         pruneTree(bestCost_);
@@ -633,8 +712,16 @@ void ompl::geometric::RRTstar::updateChildCosts(Motion *m)
 {
     for (std::size_t i = 0; i < m->children.size(); ++i)
     {
+      if (m->valid)
+      {
         m->children[i]->cost = opt_->combineCosts(m->cost, m->children[i]->incCost);
         updateChildCosts(m->children[i]);
+      }
+      else
+      {
+        m->children[i]->cost = base::Cost(std::numeric_limits<double>::max());
+        m->children[i]->valid = false;
+      }
     }
 }
 

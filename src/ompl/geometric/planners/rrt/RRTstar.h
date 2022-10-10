@@ -335,7 +335,7 @@ namespace ompl
             public:
                 /** \brief Constructor that allocates memory for the state. This constructor automatically allocates
                  * memory for \e state, \e cost, and \e incCost */
-                Motion(const base::SpaceInformationPtr &si) : state(si->allocState()), parent(nullptr), inGoal(false)
+                Motion(const base::SpaceInformationPtr &si) : state(si->allocState()), parent(nullptr), inGoal(false), valid(true)
                 {
                 }
 
@@ -359,6 +359,10 @@ namespace ompl
 
                 /** \brief The set of motions descending from the current motion */
                 std::vector<Motion *> children;
+
+                /** \brief Set to false if an obstacle blocks this motion*/
+                bool valid;
+
             };
 
             /** \brief Create the samplers */

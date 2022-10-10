@@ -414,8 +414,10 @@ namespace ompl
             /** \brief The set of start states */
             std::vector<State *> startStates_;
 
+        public:
             /** \brief The goal representation */
             GoalPtr goal_;
+        protected:
 
             /** \brief A Representation of a proof of non-existence of a solution for this problem definition */
             SolutionNonExistenceProofPtr nonExistenceProof_;
