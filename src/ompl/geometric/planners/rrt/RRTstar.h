@@ -48,6 +48,16 @@
 #include <utility>
 #include <list>
 
+#include <ros/ros.h>
+#include <control_msgs/FollowJointTrajectoryAction.h>
+#include <moveit_msgs/ExecuteTrajectoryAction.h>
+#include <moveit_msgs/PlanningScene.h>
+#include <actionlib/client/simple_action_client.h>
+#include <std_msgs/Float64MultiArray.h>
+
+/* typedef actionlib::SimpleActionClient<control_msgs::FollowJointTrajectoryAction> TrajectoryClient; */
+typedef actionlib::SimpleActionClient<moveit_msgs::ExecuteTrajectoryAction> TrajectoryClient;
+
 namespace ompl
 {
     namespace geometric
@@ -526,6 +536,22 @@ namespace ompl
             {
                 return std::to_string(bestCost().value());
             }
+
+            void newGoalCallback(const std_msgs::Float64MultiArray new_goal_msg);
+            void sceneChangedCallback(const moveit_msgs::PlanningScene planning_scene_msg);
+            bool new_current_motion_;
+            bool scene_changed_;
+            std::vector<double>* new_goal_vec_;
+            std::vector<Motion *> rootRewireQueue_;
+            Motion *current_motion_;
+            ros::NodeHandle nh_;
+            ros::Subscriber new_goal_sub_;
+            ros::Subscriber scene_changed_sub_;
+            TrajectoryClient* trajectory_client_;
+            // Real panda controller
+            /* control_msgs::FollowJointTrajectoryGoal joint_trajectory_goal_; */
+            // Sim controller
+            /* moveit_msgs::ExecuteTrajectoryGoal joint_trajectory_goal_; */
         };
     }
 }

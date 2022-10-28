@@ -34,6 +34,8 @@ set(OMPL_DEMO_INSTALL_DIR "${CMAKE_INSTALL_DATAROOTDIR}/ompl/demos"
     CACHE STRING "Relative path to directory where demos will be installed")
 
 include_directories("${OMPL_INCLUDE_DIRS}")
+find_package(catkin REQUIRED COMPONENTS roscpp actionlib control_msgs moveit_msgs std_msgs)
+include_directories(${catkin_INCLUDE_DIRS})
 
 if(MSVC)
     add_definitions(-DBOOST_ALL_NO_LIB)
@@ -51,8 +53,6 @@ set(Boost_USE_MULTITHREADED ON)
 set(Boost_NO_BOOST_CMAKE ON)
 find_package(Boost 1.58 QUIET REQUIRED COMPONENTS serialization filesystem system program_options)
 include_directories(SYSTEM ${Boost_INCLUDE_DIR})
-find_package(catkin REQUIRED COMPONENTS roscpp)
-include_directories(${catkin_INCLUDE_DIRS})
 
 # Add support in Boost::Python for std::shared_ptr
 # This is a hack that replaces boost::shared_ptr related code with std::shared_ptr.

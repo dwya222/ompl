@@ -57,6 +57,7 @@ ompl::base::SpaceInformation::SpaceInformation(StateSpacePtr space) : stateSpace
 
 void ompl::base::SpaceInformation::setup()
 {
+    OMPL_WARN("in SpaceInformation::setup()");
     if (!stateValidityChecker_)
     {
         stateValidityChecker_ = std::make_shared<AllValidStateValidityChecker>(this);
@@ -66,19 +67,24 @@ void ompl::base::SpaceInformation::setup()
     if (!motionValidator_)
         setDefaultMotionValidator();
 
+    OMPL_WARN("running stateSpace->setup()");
     stateSpace_->setup();
+    OMPL_WARN("ran stateSpace->setup()");
     if (stateSpace_->getDimension() <= 0)
         throw Exception("The dimension of the state space we plan in must be > 0");
 
     params_.clear();
     params_.include(stateSpace_->params());
 
+    OMPL_WARN("Changing setup_ to true in setup()");
     setup_ = true;
 }
 
 bool ompl::base::SpaceInformation::isSetup() const
 {
-    return setup_;
+  if (!setup_)
+    OMPL_WARN("Querying for si when not setup yet");
+  return setup_;
 }
 
 void ompl::base::SpaceInformation::setStateValidityChecker(const StateValidityCheckerFn &svc)
@@ -121,12 +127,14 @@ void ompl::base::SpaceInformation::setDefaultMotionValidator()
 void ompl::base::SpaceInformation::setValidStateSamplerAllocator(const ValidStateSamplerAllocator &vssa)
 {
     vssa_ = vssa;
+    OMPL_WARN("Changing setup_ to false in setValidStateSamplerAllocator");
     setup_ = false;
 }
 
 void ompl::base::SpaceInformation::clearValidStateSamplerAllocator()
 {
     vssa_ = ValidStateSamplerAllocator();
+    OMPL_WARN("Changing setup_ to false in clearValidStateSamplerAllocator");
     setup_ = false;
 }
 
