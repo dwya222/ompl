@@ -537,13 +537,26 @@ namespace ompl
                 return std::to_string(bestCost().value());
             }
 
+            Motion* getNextMotion(Motion *last_motion);
+            void sendTrajectoryGoalFromMotion(Motion *next_motion);
+            void changeRoot(Motion *new_root);
+            /* void rewireRoot(); */
+            void evalRoot(Motion *goal);
+            void printStateValues(base::State *state);
             void newGoalCallback(const std_msgs::Float64MultiArray new_goal_msg);
             void sceneChangedCallback(const moveit_msgs::PlanningScene planning_scene_msg);
-            bool new_current_motion_;
             bool scene_changed_;
             std::vector<double>* new_goal_vec_;
-            std::vector<Motion *> rootRewireQueue_;
-            Motion *current_motion_;
+            /* std::deque<Motion *> rootRewireQueue_; */
+            /* std::vector<Motion *> rr_nbh_; */
+            /* std::vector<base::Cost> rr_costs_; */
+            /* std::vector<base::Cost> rr_inc_costs_; */
+            /* std::vector<std::size_t> rr_sorted_cost_indices_; */
+            /* std::vector<int> rr_valid_; */
+            ros::Time rr_start_time_;
+            ros::Duration rr_time_allowed_;
+            Motion *rr_motion_;
+            Motion *current_root_;
             ros::NodeHandle nh_;
             ros::Subscriber new_goal_sub_;
             ros::Subscriber scene_changed_sub_;

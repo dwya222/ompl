@@ -98,8 +98,6 @@ ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
 
     // Real-time/ROS setup
     new_goal_vec_ = nullptr;
-    new_current_motion_ = false;
-    current_motion_ = nullptr;
     // flag for when motions needs to be checked
     // TODO: need to change the flag when an obstacle is moved/the scene is updated
     scene_changed_ = false;
@@ -301,40 +299,23 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     // our functor for sorting nearest neighbors
     CostIndexCompare compareFn(costs, *opt_);
 
-    // TODO: consider uncommenting if there is some reason I need an initial current motion
-    /* current_motion_ = startMotions_[0]; */
+    current_root_ = startMotions_[0];
     OMPL_WARN("Max distance: '%f'", maxDistance_);
+    // Realtime variables (should initialize on the stack where possible)
+    bool arm_in_motion = false;
+    bool goal_acheived = false;
+    Motion *prevBestGoalMotion = nullptr;
+    Motion *next_motion = nullptr;
+    moveit_msgs::ExecuteTrajectoryGoal trajectory_goal_msg;
+    /* rr_time_allowed_ = ros::Duration(0.2); */
 
-    while (ptc == false)
-    /* while (ros::ok()) */
+    /* while (ptc == false) */
+    while (goal_acheived == false)
     {
         iterations_++;
 
-        // Check if our environment, goal state, or current state has changed
+        // Check if our environment (obstacles) or goal state has changed
         ros::spinOnce();
-        // If we are moving to the next node in our solution path, update our current state and change
-        // our root node
-        if (new_current_motion_) /* && bestGoalMotion_ ? ) */
-        {
-          Motion *nextMotion = bestGoalMotion_;
-          while (nextMotion->parent->parent != nullptr)
-          {
-            nextMotion = nextMotion->parent;
-          }
-          current_motion_ = nextMotion;
-          current_motion_->cost = opt_->identityCost();
-          Motion *prev_motion = current_motion_->parent;
-          // make the previous start state a child of this new start state
-          current_motion_->children.push_back(prev_motion);
-          // remove this new start state from the child vector of the previous start state
-          removeFromParent(current_motion_);
-          prev_motion->incCost = opt_->motionCost(current_motion_->state, prev_motion->state);
-          prev_motion->cost = opt_->combineCosts(current_motion_->cost, prev_motion->incCost);
-          // add the new current motion to the root rewiring queue so the neighboring nodes move along
-          // with the root.
-          rootRewireQueue_.push_back(current_motion_);
-          new_current_motion_ = false;
-        }
         // If we have a new goal, then change our planner goal state
         if (new_goal_vec_)
         {
@@ -380,7 +361,8 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
           new_goal_vec_ = nullptr;
         }
 
-        // If we have a path to goal, and our check_flag is true, then check that the path(s) to goal are collision free
+        // If we have a path to goal, and the scene changed , then check that the path(s) to goal are collision free
+        // TODO: this collision detection should be done by the rewiring algorithms, not explicitly
         if (!goalMotions_.empty() && scene_changed_)
         {
           for (std::vector<Motion*>::iterator it = goalMotions_.begin(); it != goalMotions_.end();)
@@ -414,6 +396,47 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
           // If the best motion is not valid anymore then change it to a nullptr
           if (bestGoalMotion_ && !bestGoalMotion_->valid)
             bestGoalMotion_ = nullptr;
+        }
+
+        // If we have a different bestGoalMotion_, then change the state we are headed to
+        // NOTE: only satisfied once with initial goal since we only have one motion in goalMotions_ after changing the
+        // goal
+        if (bestGoalMotion_ != prevBestGoalMotion && trajectory_client_->getState().isDone())
+        {
+          // As long as we have not unset our bestGoalMotion_ (this may happen if our goal motion gets obstructed or the
+          // goal state changes), then we have a new or different bestGoalMotion_ so we want to change where we're
+          // headed (or start heading somewhere if we haven't started moving yet)
+          if (bestGoalMotion_ != nullptr)
+          {
+            next_motion = getNextMotion(bestGoalMotion_);
+            sendTrajectoryGoalFromMotion(next_motion);
+            arm_in_motion = true;
+            changeRoot(next_motion);
+          }
+          else
+          {
+            arm_in_motion = false;
+          }
+          prevBestGoalMotion = bestGoalMotion_;
+        }
+        // If we've reached the motion we were moving to, either we reached the final goal or we need to start moving to
+        // the next goal
+        if (arm_in_motion && trajectory_client_->getState().isDone())
+        {
+          arm_in_motion = false;
+          if (next_motion == bestGoalMotion_)
+          {
+            OMPL_INFORM("GOAL ACHEIVED");
+            goal_acheived = true;
+            // break?;
+          }
+          else if (bestGoalMotion_ != nullptr)
+          {
+            next_motion = getNextMotion(bestGoalMotion_);
+            sendTrajectoryGoalFromMotion(next_motion);
+            arm_in_motion = true;
+            changeRoot(next_motion);
+          }
         }
 
         // sample random state (with goal biasing)
@@ -743,55 +766,6 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             mpath.push_back(iterMotion);
             iterMotion = iterMotion->parent;
         }
-        // DWY test: control to state after starting point
-        OMPL_WARN("Creating/Sending 2nd state goal trajectory (currently commented out)");
-        moveit_msgs::ExecuteTrajectoryGoal joint_trajectory_goal;
-        joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint1");
-        joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint2");
-        joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint3");
-        joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint4");
-        joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint5");
-        joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint6");
-        joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint7");
-        OMPL_INFORM("size of mpath: '%d'", mpath.size());
-        Motion* last_motion = mpath[0];
-        base::State *last_state = last_motion->state;
-        Motion* next_motion = mpath[mpath.size()-2];
-        base::State *next_state = next_motion->state;
-        Motion* start_motion = mpath[mpath.size()-1];
-        base::State *start_state = start_motion->state;
-        double dist = si_->distance(start_state, last_state);
-        OMPL_WARN("Distance from start state to last state: '%f'", dist);
-        /* joint_trajectory_goal_.trajectory.points.resize(1); */
-        /* joint_trajectory_goal_.trajectory.points[0].positions.resize(7); */
-        /* joint_trajectory_goal_.trajectory.points[0].velocities.resize(7); */
-        /* joint_trajectory_goal_.trajectory.joint_trajectory.points.resize(1); */
-        joint_trajectory_goal.trajectory.joint_trajectory.points.resize(2);
-        joint_trajectory_goal.trajectory.joint_trajectory.points[0].positions.resize(7);
-        joint_trajectory_goal.trajectory.joint_trajectory.points[1].positions.resize(7);
-        joint_trajectory_goal.trajectory.joint_trajectory.points[0].velocities.resize(7);
-        joint_trajectory_goal.trajectory.joint_trajectory.points[1].velocities.resize(7);
-        for (int j=0; j<7; j++)
-        {
-          /* joint_trajectory_goal_.trajectory.points[0].positions[j] = */
-          joint_trajectory_goal.trajectory.joint_trajectory.points[0].positions[j] =
-            start_state->as<base::RealVectorStateSpace::StateType>()->values[j];
-          joint_trajectory_goal.trajectory.joint_trajectory.points[1].positions[j] =
-            next_state->as<base::RealVectorStateSpace::StateType>()->values[j];
-          /* joint_trajectory_goal_.trajectory.points[0].velocities[j] = 0.0; */
-          joint_trajectory_goal.trajectory.joint_trajectory.points[0].velocities[j] = 0.0;
-          joint_trajectory_goal.trajectory.joint_trajectory.points[1].velocities[j] = 0.0;
-        }
-        /* joint_trajectory_goal_.trajectory.points[0].time_from_start = ros::Duration(0.0); */
-        /* joint_trajectory_goal_.trajectory.header.stamp = ros::Time::now() + ros::Duration(0.50); */
-        joint_trajectory_goal.trajectory.joint_trajectory.points[0].time_from_start = ros::Duration(0.0);
-        joint_trajectory_goal.trajectory.joint_trajectory.points[1].time_from_start = ros::Duration(1.0);
-        joint_trajectory_goal.trajectory.joint_trajectory.header.stamp = ros::Time::now() + ros::Duration(0.5);
-
-        /* trajectory_client_->sendGoal(joint_trajectory_goal); */
-        /* while (!trajectory_client_->getState().isDone()) */
-        /*   ros::Duration(0.1).sleep(); */
-
         // set the solution path
         auto path(std::make_shared<PathGeometric>(si_));
         for (int i = mpath.size() - 1; i >= 0; --i)
@@ -822,6 +796,154 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
 
     // We've added a solution if newSolution == true, and it is an approximate solution if bestGoalMotion_ == false
     return {newSolution != nullptr, bestGoalMotion_ == nullptr};
+}
+
+ompl::geometric::RRTstar::Motion* ompl::geometric::RRTstar::getNextMotion(Motion *last_motion)
+{
+  Motion *next_motion = last_motion;
+  while (next_motion->parent->parent != nullptr)
+  {
+    next_motion = next_motion->parent;
+  }
+  return next_motion;
+}
+
+void ompl::geometric::RRTstar::sendTrajectoryGoalFromMotion(Motion *next_motion)
+{
+  moveit_msgs::ExecuteTrajectoryGoal joint_trajectory_goal;
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint1");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint2");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint3");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint4");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint5");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint6");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint7");
+  /* joint_trajectory_goal_.trajectory.points.resize(1); */
+  /* joint_trajectory_goal_.trajectory.points[0].positions.resize(7); */
+  /* joint_trajectory_goal_.trajectory.points[0].velocities.resize(7); */
+  /* joint_trajectory_goal_.trajectory.joint_trajectory.points.resize(1); */
+  joint_trajectory_goal.trajectory.joint_trajectory.points.resize(2);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[0].positions.resize(7);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[1].positions.resize(7);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[0].velocities.resize(7);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[1].velocities.resize(7);
+
+  base::State *start_state = next_motion->parent->state;
+  base::State *next_state = next_motion->state;
+  for (int j=0; j<7; j++)
+  {
+    /* joint_trajectory_goal_.trajectory.points[0].positions[j] = */
+    joint_trajectory_goal.trajectory.joint_trajectory.points[0].positions[j] =
+      start_state->as<base::RealVectorStateSpace::StateType>()->values[j];
+    joint_trajectory_goal.trajectory.joint_trajectory.points[1].positions[j] =
+      next_state->as<base::RealVectorStateSpace::StateType>()->values[j];
+    /* joint_trajectory_goal_.trajectory.points[0].velocities[j] = 0.0; */
+    joint_trajectory_goal.trajectory.joint_trajectory.points[0].velocities[j] = 0.0;
+    joint_trajectory_goal.trajectory.joint_trajectory.points[1].velocities[j] = 0.0;
+  }
+  /* joint_trajectory_goal_.trajectory.points[0].time_from_start = ros::Duration(0.0); */
+  /* joint_trajectory_goal_.trajectory.header.stamp = ros::Time::now() + ros::Duration(0.50); */
+  joint_trajectory_goal.trajectory.joint_trajectory.points[0].time_from_start = ros::Duration(0.0);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[1].time_from_start = ros::Duration(1.0);
+  joint_trajectory_goal.trajectory.joint_trajectory.header.stamp = ros::Time::now() + ros::Duration(0.5);
+
+  trajectory_client_->sendGoal(joint_trajectory_goal);
+}
+
+void ompl::geometric::RRTstar::changeRoot(Motion *new_root)
+{
+  // make the previous root a child of this new root
+  Motion *prev_root = new_root->parent;
+  new_root->children.push_back(prev_root);
+  prev_root->parent = new_root;
+  // remove the new root from the children of the previous root
+  removeFromParent(new_root);
+  new_root->parent = nullptr;
+  // Re-calculate costs
+  new_root->cost = opt_->identityCost();
+  prev_root->incCost = opt_->motionCost(new_root->state, prev_root->state);
+  prev_root->cost = opt_->combineCosts(new_root->cost, prev_root->incCost);
+  current_root_ = new_root;
+  /* rewireRoot(); */
+  // add the new current motion to the root rewiring queue so the neighboring nodes move along
+  // with the root.
+  /* rootRewireQueue_.push_front(new_root); */
+}
+
+/* void ompl::geometric::RRTstar::rewireRoot() */
+/* { */
+/*   OMPL_INFORM("A"); */
+/*   if (rootRewireQueue_.size() == 0) */
+/*     rootRewireQueue_.push_front(current_root_); */
+/*   rr_start_time_ = ros::Time::now(); */
+
+/*   while (rootRewireQueue_.size() > 0 && (ros::Time::now() - rr_start_time_ < rr_time_allowed_)) */
+/*   { */
+/*   OMPL_INFORM("B"); */
+/*     rr_motion_ = rootRewireQueue_.front(); */
+/*     rootRewireQueue_.pop_front(); */
+/*   OMPL_INFORM("C"); */
+/*     getNeighbors(rr_motion_, rr_nbh_); */
+/*   OMPL_INFORM("D"); */
+/*     if (rr_costs_.size() < rr_nbh_.size()) */
+/*     { */
+/*       rr_costs_.resize(rr_nbh_.size()); */
+/*       rr_inc_costs_.resize(rr_nbh_.size()); */
+/*       rr_sorted_cost_indices_.resize(rr_nbh_.size()); */
+/*     } */
+/*   OMPL_INFORM("E"); */
+
+/*     if (rr_valid_.size() < rr_nbh_.size()) */
+/*       rr_valid_.resize(rr_nbh_.size()); */
+/*     std::fill(rr_valid_.begin(), rr_valid_.begin() + rr_nbh_.size(), 0); */
+/*   OMPL_INFORM("F"); */
+
+/*     for (std::size_t i = 0; i < rr_nbh_.size(); ++i) */
+/*     { */
+/*       if (rr_nbh_[i] != rr_motion_->parent) */
+/*       { */
+/*         rr_inc_costs_[i] = opt_->motionCost(rr_nbh_[i]->state, rr_motion_->state); */
+/*         rr_costs_[i] = opt_->combineCosts(rr_nbh_[i]->cost, rr_inc_costs_[i]); */
+/*         if (opt_->isCostBetterThan(rr_costs_[i], rr_motion_->cost)) */
+/*         { */
+/*           if ((!useKNearest_ || si_->distance(rr_nbh_[i]->state, rr_motion_->state) < maxDistance_) && */
+/*               si_->checkMotion(rr_nbh_[i]->state, rr_motion_->state)) */
+/*           { */
+/*             rr_motion_->incCost = rr_inc_costs_[i]; */
+/*             rr_motion_->cost = rr_costs_[i]; */
+/*             rr_motion_->parent = rr_nbh_[i]; */
+/*             rr_valid_[i] = 1; */
+/*           } */
+/*           else */
+/*             rr_valid_[i] = -1; */
+/*         } */
+/*       } */
+/*       else */
+/*       { */
+/*         rr_inc_costs_[i] = rr_motion_->incCost; */
+/*         rr_costs_[i] = rr_motion_->cost; */
+/*         rr_valid_[i] = 1; */
+/*       } */
+/*       rootRewireQueue_.push_back(rr_nbh_[i]); */
+/*     } */
+/*   OMPL_INFORM("G"); */
+/*   } */
+/* } */
+
+void ompl::geometric::RRTstar::evalRoot(Motion *goal)
+{
+  Motion *root = goal;
+  while (root->parent)
+    root = root->parent;
+  printStateValues(root->state);
+}
+
+void ompl::geometric::RRTstar::printStateValues(base::State *state)
+{
+  for (int i=0; i<7; i++)
+  {
+    OMPL_INFORM("State '%d': '%f'", i, state->as<base::RealVectorStateSpace::StateType>()->values[i]);
+  }
 }
 
 void ompl::geometric::RRTstar::getNeighbors(Motion *motion, std::vector<Motion *> &nbh) const
