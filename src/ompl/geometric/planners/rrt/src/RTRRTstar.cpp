@@ -40,6 +40,10 @@
 #include <limits>
 #include <vector>
 #include <iostream>
+#include <fstream>
+#include <jsoncpp/json/json.h>
+#include <jsoncpp/json/writer.h>
+#include <sys/stat.h>
 #include "ompl/base/Goal.h"
 #include "ompl/base/goals/GoalSampleableRegion.h"
 #include "ompl/base/goals/GoalState.h"
@@ -58,6 +62,7 @@
 #include <control_msgs/FollowJointTrajectoryAction.h>
 #include <actionlib/client/simple_action_client.h>
 #include <std_msgs/Float64MultiArray.h>
+#include <ros/package.h>
 
 
 ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
@@ -99,6 +104,8 @@ ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
     // Real-time/ROS setup
     /* useKNearest_ = false; */
     new_goal_vec_ = nullptr;
+    goal_num_ = 0;
+    step_num_ = 0;
     // flag for when motions needs to be checked
     // TODO: need to change the flag when an obstacle is moved/the scene is updated
     scene_changed_ = false;
@@ -142,8 +149,7 @@ void ompl::geometric::RTRRTstar::setup()
     Planner::setup();
     tools::SelfConfig sc(si_, getName());
     sc.configurePlannerRange(maxDistance_); // Originally 6.712660
-    // DWY: make maxDistance smaller to allow for more nodes to stop at along the way
-    maxDistance_ = maxDistance_/1.5;
+    OMPL_WARN("maxDistance_: '%f'", maxDistance_);
     if (!si_->getStateSpace()->hasSymmetricDistance() || !si_->getStateSpace()->hasSymmetricInterpolate())
     {
         OMPL_WARN("%s requires a state space with symmetric distance and symmetric interpolation.", getName().c_str());
@@ -417,6 +423,7 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
           {
             next_motion = getNextMotion(bestGoalMotion_);
             sendTrajectoryGoalFromMotion(next_motion);
+            storeStepInfo(bestGoalMotion_, next_motion, true);
             arm_in_motion = true;
             changeRoot(next_motion);
           }
@@ -435,12 +442,13 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
           {
             OMPL_INFORM("GOAL ACHEIVED");
             goal_acheived = true;
-            // break?;
+            continue;
           }
           else if (bestGoalMotion_ != nullptr)
           {
             next_motion = getNextMotion(bestGoalMotion_);
             sendTrajectoryGoalFromMotion(next_motion);
+            storeStepInfo(bestGoalMotion_, next_motion, false);
             arm_in_motion = true;
             changeRoot(next_motion);
           }
@@ -607,11 +615,6 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
             else
             {
                 // add motion to the tree
-                motion_addition_count++;
-                if (motion_addition_count % 10 == 0)
-                {
-                  OMPL_INFORM("Motion addition count: '%d'", motion_addition_count);
-                }
                 nn_->add(motion);
                 motion->parent->children.push_back(motion);
             }
@@ -751,6 +754,25 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
         if (bestGoalMotion_ && opt_->isSatisfied(bestCost_))
             break;
     }
+    // Save goal/path data
+    std::string ee_control_path = ros::package::getPath("end_effector_control");
+    std::string dir_path = ee_control_path + "/data/planning/";
+    std::string base_file_name = "RTRRTstar_run";
+    std::string file_ext = ".json";
+    int file_version = 0;
+    std::string file_name = dir_path + base_file_name + std::to_string(file_version) + file_ext;
+
+    while (fileExists(file_name))
+    {
+      file_version++;
+      file_name = dir_path + base_file_name + std::to_string(file_version) + file_ext;
+    }
+
+    std::ofstream output_file;
+    output_file.open(file_name);
+    Json::StyledWriter styledWriter;
+    output_file << styledWriter.write(path_info_json_);
+    output_file.close();
 
     // Add our solution (if it exists)
     Motion *newSolution = nullptr;
@@ -808,6 +830,45 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
 
     // We've added a solution if newSolution == true, and it is an approximate solution if bestGoalMotion_ == false
     return {newSolution != nullptr, bestGoalMotion_ == nullptr};
+}
+
+inline bool ompl::geometric::RTRRTstar::fileExists(const std::string& name)
+{
+  struct stat buffer;
+  return (stat (name.c_str(), &buffer) == 0);
+}
+
+void ompl::geometric::RTRRTstar::storeStepInfo(Motion *goal, Motion *next, bool new_goal)
+{
+  base::State *goal_state = goal->state;
+  base::State *prev_state = next->parent->state;
+  base::State *next_state = next->state;
+  if (new_goal)
+  {
+    goal_num_++;
+    step_num_ = 0;
+    Json::Value goal_arr(Json::arrayValue);
+    for (int i=0; i<7; i++)
+    {
+      goal_arr.append(goal_state->as<base::RealVectorStateSpace::StateType>()->values[i]);
+    }
+    path_info_json_["Goals"]["Goal" + std::to_string(goal_num_)] = goal_arr;
+  }
+
+  step_num_++;
+  Json::Value step_from_arr(Json::arrayValue);
+  for (int j=0; j<7; j++)
+  {
+    step_from_arr.append(prev_state->as<base::RealVectorStateSpace::StateType>()->values[j]);
+  }
+  path_info_json_["Steps"]["Goal" + std::to_string(goal_num_)]["Step" + std::to_string(step_num_)]["From"] = step_from_arr;
+
+  Json::Value step_to_arr(Json::arrayValue);
+  for (int k=0; k<7; k++)
+  {
+    step_to_arr.append(next_state->as<base::RealVectorStateSpace::StateType>()->values[k]);
+  }
+  path_info_json_["Steps"]["Goal" + std::to_string(goal_num_)]["Step" + std::to_string(step_num_)]["To"] = step_to_arr;
 }
 
 ompl::geometric::RTRRTstar::Motion* ompl::geometric::RTRRTstar::getNextMotion(Motion *last_motion)

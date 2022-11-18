@@ -54,6 +54,7 @@ if(MSVC)
 else(MSVC)
     add_library(ompl SHARED ${OMPL_SOURCE_CODE})
 endif(MSVC)
+list(APPEND OMPL_LINK_LIBRARIES jsoncpp_lib)
 target_link_libraries(ompl
     ${OMPL_LINK_LIBRARIES}
     ${Boost_SERIALIZATION_LIBRARY}

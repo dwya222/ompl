@@ -47,6 +47,7 @@
 #include <deque>
 #include <utility>
 #include <list>
+#include <jsoncpp/json/json.h>
 
 #include <ros/ros.h>
 #include <control_msgs/FollowJointTrajectoryAction.h>
@@ -538,6 +539,8 @@ namespace ompl
             }
 
             Motion* getNextMotion(Motion *last_motion);
+            bool fileExists(const std::string& name);
+            void storeStepInfo(Motion *goal, Motion *next, bool new_goal);
             void sendTrajectoryGoalFromMotion(Motion *next_motion);
             void changeRoot(Motion *new_root);
             void rewireRoot();
@@ -546,6 +549,9 @@ namespace ompl
             void newGoalCallback(const std_msgs::Float64MultiArray new_goal_msg);
             void sceneChangedCallback(const moveit_msgs::PlanningScene planning_scene_msg);
             bool scene_changed_;
+            int goal_num_;
+            int step_num_;
+            Json::Value path_info_json_;
             std::vector<double>* new_goal_vec_;
             std::vector<Motion *> rr_nbh_;
             std::vector<base::Cost> rr_costs_;

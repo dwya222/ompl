@@ -47,6 +47,7 @@
 #include <deque>
 #include <utility>
 #include <list>
+#include <jsoncpp/json/json.h>
 
 namespace ompl
 {
@@ -522,6 +523,10 @@ namespace ompl
             {
                 return std::to_string(bestCost().value());
             }
+
+            bool fileExists(const std::string& name);
+            void savePathInfo(std::vector<Motion *> solution_path);
+            Json::Value path_info_json_;
         };
     }
 }
