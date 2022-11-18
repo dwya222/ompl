@@ -34,11 +34,12 @@
 
 /* Authors: Alejandro Perez, Sertac Karaman, Ryan Luna, Luis G. Torres, Ioan Sucan, Javier V Gomez, Jonathan Gammell */
 
-#include "ompl/geometric/planners/rrt/RRTstar.h"
+#include "ompl/geometric/planners/rrt/RTRRTstar.h"
 #include <algorithm>
 #include <boost/math/constants/constants.hpp>
 #include <limits>
 #include <vector>
+#include <iostream>
 #include "ompl/base/Goal.h"
 #include "ompl/base/goals/GoalSampleableRegion.h"
 #include "ompl/base/goals/GoalState.h"
@@ -48,54 +49,101 @@
 #include "ompl/base/samplers/informed/OrderedInfSampler.h"
 #include "ompl/tools/config/SelfConfig.h"
 #include "ompl/util/GeometricEquations.h"
+#include "ompl/base/spaces/RealVectorStateSpace.h"
+#include "ompl/base/goals/GoalState.h"
+#include "ompl/base/goals/GoalStates.h"
+#include <ompl/base/goals/GoalLazySamples.h>
 
-ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
-  : base::Planner(si, "RRTstar")
+#include <ros/ros.h>
+#include <control_msgs/FollowJointTrajectoryAction.h>
+#include <actionlib/client/simple_action_client.h>
+#include <std_msgs/Float64MultiArray.h>
+
+
+ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
+  : base::Planner(si, "RTRRTstar")
 {
     specs_.approximateSolutions = true;
     specs_.optimizingPaths = true;
     specs_.canReportIntermediateSolutions = true;
 
-    Planner::declareParam<double>("range", this, &RRTstar::setRange, &RRTstar::getRange, "0.:1.:10000.");
-    Planner::declareParam<double>("goal_bias", this, &RRTstar::setGoalBias, &RRTstar::getGoalBias, "0.:.05:1.");
-    Planner::declareParam<double>("rewire_factor", this, &RRTstar::setRewireFactor, &RRTstar::getRewireFactor,
+    Planner::declareParam<double>("range", this, &RTRRTstar::setRange, &RTRRTstar::getRange, "0.:1.:10000.");
+    Planner::declareParam<double>("goal_bias", this, &RTRRTstar::setGoalBias, &RTRRTstar::getGoalBias, "0.:.05:1.");
+    Planner::declareParam<double>("rewire_factor", this, &RTRRTstar::setRewireFactor, &RTRRTstar::getRewireFactor,
                                   "1.0:0.01:2.0");
-    Planner::declareParam<bool>("use_k_nearest", this, &RRTstar::setKNearest, &RRTstar::getKNearest, "0,1");
-    Planner::declareParam<bool>("delay_collision_checking", this, &RRTstar::setDelayCC, &RRTstar::getDelayCC, "0,1");
-    Planner::declareParam<bool>("tree_pruning", this, &RRTstar::setTreePruning, &RRTstar::getTreePruning, "0,1");
-    Planner::declareParam<double>("prune_threshold", this, &RRTstar::setPruneThreshold, &RRTstar::getPruneThreshold,
+    Planner::declareParam<bool>("use_k_nearest", this, &RTRRTstar::setKNearest, &RTRRTstar::getKNearest, "0,1");
+    Planner::declareParam<bool>("delay_collision_checking", this, &RTRRTstar::setDelayCC, &RTRRTstar::getDelayCC, "0,1");
+    Planner::declareParam<bool>("tree_pruning", this, &RTRRTstar::setTreePruning, &RTRRTstar::getTreePruning, "0,1");
+    Planner::declareParam<double>("prune_threshold", this, &RTRRTstar::setPruneThreshold, &RTRRTstar::getPruneThreshold,
                                   "0.:.01:1.");
-    Planner::declareParam<bool>("pruned_measure", this, &RRTstar::setPrunedMeasure, &RRTstar::getPrunedMeasure, "0,1");
-    Planner::declareParam<bool>("informed_sampling", this, &RRTstar::setInformedSampling, &RRTstar::getInformedSampling,
+    Planner::declareParam<bool>("pruned_measure", this, &RTRRTstar::setPrunedMeasure, &RTRRTstar::getPrunedMeasure, "0,1");
+    Planner::declareParam<bool>("informed_sampling", this, &RTRRTstar::setInformedSampling, &RTRRTstar::getInformedSampling,
                                 "0,1");
-    Planner::declareParam<bool>("sample_rejection", this, &RRTstar::setSampleRejection, &RRTstar::getSampleRejection,
+    Planner::declareParam<bool>("sample_rejection", this, &RTRRTstar::setSampleRejection, &RTRRTstar::getSampleRejection,
                                 "0,1");
-    Planner::declareParam<bool>("new_state_rejection", this, &RRTstar::setNewStateRejection,
-                                &RRTstar::getNewStateRejection, "0,1");
-    Planner::declareParam<bool>("use_admissible_heuristic", this, &RRTstar::setAdmissibleCostToCome,
-                                &RRTstar::getAdmissibleCostToCome, "0,1");
-    Planner::declareParam<bool>("ordered_sampling", this, &RRTstar::setOrderedSampling, &RRTstar::getOrderedSampling,
+    Planner::declareParam<bool>("new_state_rejection", this, &RTRRTstar::setNewStateRejection,
+                                &RTRRTstar::getNewStateRejection, "0,1");
+    Planner::declareParam<bool>("use_admissible_heuristic", this, &RTRRTstar::setAdmissibleCostToCome,
+                                &RTRRTstar::getAdmissibleCostToCome, "0,1");
+    Planner::declareParam<bool>("ordered_sampling", this, &RTRRTstar::setOrderedSampling, &RTRRTstar::getOrderedSampling,
                                 "0,1");
-    Planner::declareParam<unsigned int>("ordering_batch_size", this, &RRTstar::setBatchSize, &RRTstar::getBatchSize,
+    Planner::declareParam<unsigned int>("ordering_batch_size", this, &RTRRTstar::setBatchSize, &RTRRTstar::getBatchSize,
                                         "1:100:1000000");
-    Planner::declareParam<bool>("focus_search", this, &RRTstar::setFocusSearch, &RRTstar::getFocusSearch, "0,1");
-    Planner::declareParam<unsigned int>("number_sampling_attempts", this, &RRTstar::setNumSamplingAttempts,
-                                        &RRTstar::getNumSamplingAttempts, "10:10:100000");
+    Planner::declareParam<bool>("focus_search", this, &RTRRTstar::setFocusSearch, &RTRRTstar::getFocusSearch, "0,1");
+    Planner::declareParam<unsigned int>("number_sampling_attempts", this, &RTRRTstar::setNumSamplingAttempts,
+                                        &RTRRTstar::getNumSamplingAttempts, "10:10:100000");
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
+
+    // Real-time/ROS setup
+    /* useKNearest_ = false; */
+    new_goal_vec_ = nullptr;
+    // flag for when motions needs to be checked
+    // TODO: need to change the flag when an obstacle is moved/the scene is updated
+    scene_changed_ = false;
+    /* OMPL_INFORM("Turning tree pruning on"); */
+    /* setTreePruning(true); */
+    new_goal_sub_ = nh_.subscribe("/new_planner_goal", 100, &ompl::geometric::RTRRTstar::newGoalCallback, this);
+    /* scene_changed_sub_ = nh_.subscribe("/move_group/monitored_planning_scene", 100, &ompl::geometric::RTRRTstar::sceneChangedCallback, this); */
+    trajectory_client_ = new TrajectoryClient(
+        "/execute_trajectory", true);
+        /* "/position_joint_trajectory_controller/follow_joint_trajectory", true); */
+    while (!trajectory_client_->waitForServer(ros::Duration(1.0))) {
+      /* OMPL_INFORM("Waiting for the position_joint_trajectory_controller action server"); */
+      OMPL_INFORM("Waiting for the execute_trajectory action server");
+    }
+    // fill in joint trajectory goal msg
+    /* joint_trajectory_goal_.trajectory.joint_names.push_back("panda_joint1"); */
+    /* joint_trajectory_goal_.trajectory.joint_names.push_back("panda_joint2"); */
+    /* joint_trajectory_goal_.trajectory.joint_names.push_back("panda_joint3"); */
+    /* joint_trajectory_goal_.trajectory.joint_names.push_back("panda_joint4"); */
+    /* joint_trajectory_goal_.trajectory.joint_names.push_back("panda_joint5"); */
+    /* joint_trajectory_goal_.trajectory.joint_names.push_back("panda_joint6"); */
+    /* joint_trajectory_goal_.trajectory.joint_names.push_back("panda_joint7"); */
+    /* joint_trajectory_goal_.trajectory.joint_trajectory.joint_names.push_back("panda_joint1"); */
+    /* joint_trajectory_goal_.trajectory.joint_trajectory.joint_names.push_back("panda_joint2"); */
+    /* joint_trajectory_goal_.trajectory.joint_trajectory.joint_names.push_back("panda_joint3"); */
+    /* joint_trajectory_goal_.trajectory.joint_trajectory.joint_names.push_back("panda_joint4"); */
+    /* joint_trajectory_goal_.trajectory.joint_trajectory.joint_names.push_back("panda_joint5"); */
+    /* joint_trajectory_goal_.trajectory.joint_trajectory.joint_names.push_back("panda_joint6"); */
+    /* joint_trajectory_goal_.trajectory.joint_trajectory.joint_names.push_back("panda_joint7"); */
 }
 
-ompl::geometric::RRTstar::~RRTstar()
+ompl::geometric::RTRRTstar::~RTRRTstar()
 {
+    if (trajectory_client_)
+      delete trajectory_client_;
     freeMemory();
 }
 
-void ompl::geometric::RRTstar::setup()
+void ompl::geometric::RTRRTstar::setup()
 {
     Planner::setup();
     tools::SelfConfig sc(si_, getName());
-    sc.configurePlannerRange(maxDistance_);
+    sc.configurePlannerRange(maxDistance_); // Originally 6.712660
+    // DWY: make maxDistance smaller to allow for more nodes to stop at along the way
+    maxDistance_ = maxDistance_/1.5;
     if (!si_->getStateSpace()->hasSymmetricDistance() || !si_->getStateSpace()->hasSymmetricInterpolate())
     {
         OMPL_WARN("%s requires a state space with symmetric distance and symmetric interpolation.", getName().c_str());
@@ -142,7 +190,7 @@ void ompl::geometric::RRTstar::setup()
     calculateRewiringLowerBounds();
 }
 
-void ompl::geometric::RRTstar::clear()
+void ompl::geometric::RTRRTstar::clear()
 {
     setup_ = false;
     Planner::clear();
@@ -162,7 +210,17 @@ void ompl::geometric::RRTstar::clear()
     prunedMeasure_ = 0.0;
 }
 
-ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTerminationCondition &ptc)
+void ompl::geometric::RTRRTstar::newGoalCallback(const std_msgs::Float64MultiArray new_goal_msg)
+{
+  new_goal_vec_ = new std::vector<double>(new_goal_msg.data);
+}
+
+void ompl::geometric::RTRRTstar::sceneChangedCallback(const moveit_msgs::PlanningScene planning_scene_msg)
+{
+  scene_changed_ = planning_scene_msg.is_diff;
+}
+
+ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerTerminationCondition &ptc)
 {
     checkValidity();
     base::Goal *goal = pdef_->getGoal().get();
@@ -233,8 +291,8 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
                     bestCost_.value());
 
     if (useKNearest_)
-        OMPL_INFORM("%s: Initial k-nearest value of %u", getName().c_str(),
-                    (unsigned int)std::ceil(k_rrt_ * log((double)(nn_->size() + 1u))));
+        OMPL_INFORM("%s: Initial k-nearest value of %u, k_rrt value: %d", getName().c_str(),
+                    (unsigned int)std::ceil(k_rrt_ * log((double)(nn_->size() + 1u))), k_rrt_);
     else
         OMPL_INFORM(
             "%s: Initial rewiring radius of %.2f", getName().c_str(),
@@ -244,16 +302,158 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     // our functor for sorting nearest neighbors
     CostIndexCompare compareFn(costs, *opt_);
 
-    while (ptc == false)
+    current_root_ = startMotions_[0];
+    OMPL_WARN("Max distance: '%f'", maxDistance_);
+    // Realtime variables (should initialize on the stack where possible)
+    bool arm_in_motion = false;
+    bool goal_acheived = false;
+    Motion *prevBestGoalMotion = nullptr;
+    Motion *next_motion = nullptr;
+    moveit_msgs::ExecuteTrajectoryGoal trajectory_goal_msg;
+    rr_time_allowed_ = ros::Duration(0.5);
+    ros::Time start_solution_loop = ros::Time::now();
+    int motion_addition_count = 0;
+
+    /* while (ptc == false) */
+    while (goal_acheived == false)
     {
         iterations_++;
+
+        // Check if our environment (obstacles) or goal state has changed
+        ros::spinOnce();
+        // If we have a new goal, then change our planner goal state
+        if (new_goal_vec_)
+        {
+          OMPL_WARN("New goal state detected changing Planner goal and removing old solutions");
+          base::State *gstate = si_->allocState();
+          int i = 0;
+          for (std::vector<double>::iterator it = (*new_goal_vec_).begin(); it != (*new_goal_vec_).end(); it++, i++)
+          {
+            gstate->as<base::RealVectorStateSpace::StateType>()->values[i] = *it;
+          }
+          if (base::GoalLazySamples* tmp_gls = dynamic_cast<base::GoalLazySamples*>(pdef_->getGoal().get()))
+          {
+            tmp_gls->stopSampling();
+          }
+          // threshold for the GoalLazySamples object was 0.00000, but that doesn't work for
+          // this simpler GoalState object (joint state) that the new goal is
+          double threshold = 0.10000;
+          pdef_->setGoalState(gstate, threshold);
+          checkValidity();
+          goal = pdef_->getGoal().get();
+          goal_s = dynamic_cast<base::GoalSampleableRegion *>(goal);
+          // Remove previous solutions from goalMotions_ list
+          // TODO: may want to remove check that new goal state is different enough from old goal state that
+          // the old solutions are actually invalid
+          // TODO: also may want to check if there are any current motions in the tree that satisfy the new goal
+          for (std::vector<Motion*>::iterator it = goalMotions_.begin(); it != goalMotions_.end();)
+          {
+            if (!goal->isSatisfied((*it)->state))
+            {
+              OMPL_INFORM("Removing motion from goalMotions_, goalMotions_ size: '%d'", goalMotions_.size());
+              (*it)->inGoal = false;
+              // Shouldn't need to do this:
+              /* nn_->remove(*it); */
+              goalMotions_.erase(it);
+            }
+            // TODO: create a motion at this location, check if there are any nearest neighbors that satisfy the goal in
+            // case we already have a solution to the new goal state in the tree.
+            else
+              it++;
+          }
+          OMPL_INFORM("After removing from goalMotions_, goalMotions_ size: '%d'", goalMotions_.size());
+          bestGoalMotion_ = nullptr;
+          delete new_goal_vec_;
+          new_goal_vec_ = nullptr;
+        }
+
+        // If we have a path to goal, and the scene changed , then check that the path(s) to goal are collision free
+        // TODO: this collision detection should be done by the rewiring algorithms, not explicitly
+        if (!goalMotions_.empty() && scene_changed_)
+        {
+          for (std::vector<Motion*>::iterator it = goalMotions_.begin(); it != goalMotions_.end();)
+          {
+            Motion* check_motion = *it;
+            if (!si_->checkMotion(check_motion->state, check_motion->parent->state))
+            {
+              OMPL_WARN("Motion in goal Motions found to be invalid, removing");
+              check_motion->cost = base::Cost(std::numeric_limits<double>::max());
+              check_motion->valid = false;
+              // Want to find a way to invalidate these nodes without removing them from the tree
+              nn_->remove(check_motion);
+              goalMotions_.erase(it);
+            }
+            else
+              it++;
+            check_motion = check_motion->parent;
+            while (check_motion->parent)
+            {
+              if (!si_->checkMotion(check_motion->state, check_motion->parent->state))
+              {
+                check_motion->cost = base::Cost(std::numeric_limits<double>::max());
+                check_motion->valid = false;
+                nn_->remove(check_motion);
+              }
+              check_motion = check_motion->parent;
+            }
+            /* if (it == goalMotions_.end()) */
+            /*   break; */
+          }
+          // If the best motion is not valid anymore then change it to a nullptr
+          if (bestGoalMotion_ && !bestGoalMotion_->valid)
+            bestGoalMotion_ = nullptr;
+        }
+
+        // If we have a different bestGoalMotion_, then change the state we are headed to
+        // NOTE: only satisfied once with initial goal since we only have one motion in goalMotions_ after changing the
+        // goal
+        if (bestGoalMotion_ != prevBestGoalMotion && trajectory_client_->getState().isDone())
+            /* && (ros::Time::now() - start_solution_loop > ros::Duration(15.0))) */
+        {
+          // As long as we have not unset our bestGoalMotion_ (this may happen if our goal motion gets obstructed or the
+          // goal state changes), then we have a new or different bestGoalMotion_ so we want to change where we're
+          // headed (or start heading somewhere if we haven't started moving yet)
+          if (bestGoalMotion_ != nullptr)
+          {
+            next_motion = getNextMotion(bestGoalMotion_);
+            sendTrajectoryGoalFromMotion(next_motion);
+            arm_in_motion = true;
+            changeRoot(next_motion);
+          }
+          else
+          {
+            arm_in_motion = false;
+          }
+          prevBestGoalMotion = bestGoalMotion_;
+        }
+        // If we've reached the motion we were moving to, either we reached the final goal or we need to start moving to
+        // the next goal
+        if (arm_in_motion && trajectory_client_->getState().isDone())
+        {
+          arm_in_motion = false;
+          if (next_motion == bestGoalMotion_)
+          {
+            OMPL_INFORM("GOAL ACHEIVED");
+            goal_acheived = true;
+            // break?;
+          }
+          else if (bestGoalMotion_ != nullptr)
+          {
+            next_motion = getNextMotion(bestGoalMotion_);
+            sendTrajectoryGoalFromMotion(next_motion);
+            arm_in_motion = true;
+            changeRoot(next_motion);
+          }
+        }
 
         // sample random state (with goal biasing)
         // Goal samples are only sampled until maxSampleCount() goals are in the tree, to prohibit duplicate goal
         // states.
         if (goal_s && goalMotions_.size() < goal_s->maxSampleCount() && rng_.uniform01() < goalBias_ &&
             goal_s->canSample())
+        {
             goal_s->sampleGoal(rstate);
+        }
         else
         {
             // Attempt to generate a sample, if we fail (e.g., too many rejection attempts), skip the remainder of this
@@ -407,6 +607,11 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             else
             {
                 // add motion to the tree
+                motion_addition_count++;
+                if (motion_addition_count % 10 == 0)
+                {
+                  OMPL_INFORM("Motion addition count: '%d'", motion_addition_count);
+                }
                 nn_->add(motion);
                 motion->parent->children.push_back(motion);
             }
@@ -462,6 +667,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             {
                 motion->inGoal = true;
                 goalMotions_.push_back(motion);
+                OMPL_INFORM("DWY: adding to goalMotions_. New goalMotions_ size: '%d'", goalMotions_.size());
                 checkForSolution = true;
             }
 
@@ -505,6 +711,11 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
 
                 if (updatedSolution)
                 {
+                  /* OMPL_INFORM("Updated solution: outputting bestGoalMotion_->state"); */
+                  /* for (int i=0; i<8; i++) */
+                  /* { */
+                  /*   OMPL_INFORM("rstate[%d]: '%f'", i, bestGoalMotion_->state->as<base::RealVectorStateSpace::StateType>()->values[i]); */
+                  /* } */
                     if (useTreePruning_)
                     {
                         pruneTree(bestCost_);
@@ -567,7 +778,6 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             mpath.push_back(iterMotion);
             iterMotion = iterMotion->parent;
         }
-
         // set the solution path
         auto path(std::make_shared<PathGeometric>(si_));
         for (int i = mpath.size() - 1; i >= 0; --i)
@@ -600,24 +810,197 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     return {newSolution != nullptr, bestGoalMotion_ == nullptr};
 }
 
-void ompl::geometric::RRTstar::getNeighbors(Motion *motion, std::vector<Motion *> &nbh) const
+ompl::geometric::RTRRTstar::Motion* ompl::geometric::RTRRTstar::getNextMotion(Motion *last_motion)
+{
+  Motion *next_motion = last_motion;
+  while (next_motion->parent->parent != nullptr)
+  {
+    next_motion = next_motion->parent;
+  }
+  return next_motion;
+}
+
+void ompl::geometric::RTRRTstar::sendTrajectoryGoalFromMotion(Motion *next_motion)
+{
+  moveit_msgs::ExecuteTrajectoryGoal joint_trajectory_goal;
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint1");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint2");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint3");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint4");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint5");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint6");
+  joint_trajectory_goal.trajectory.joint_trajectory.joint_names.push_back("panda_joint7");
+  /* joint_trajectory_goal_.trajectory.points.resize(1); */
+  /* joint_trajectory_goal_.trajectory.points[0].positions.resize(7); */
+  /* joint_trajectory_goal_.trajectory.points[0].velocities.resize(7); */
+  /* joint_trajectory_goal_.trajectory.joint_trajectory.points.resize(1); */
+  joint_trajectory_goal.trajectory.joint_trajectory.points.resize(2);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[0].positions.resize(7);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[1].positions.resize(7);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[0].velocities.resize(7);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[1].velocities.resize(7);
+
+  base::State *start_state = next_motion->parent->state;
+  base::State *next_state = next_motion->state;
+  for (int j=0; j<7; j++)
+  {
+    /* joint_trajectory_goal_.trajectory.points[0].positions[j] = */
+    joint_trajectory_goal.trajectory.joint_trajectory.points[0].positions[j] =
+      start_state->as<base::RealVectorStateSpace::StateType>()->values[j];
+    joint_trajectory_goal.trajectory.joint_trajectory.points[1].positions[j] =
+      next_state->as<base::RealVectorStateSpace::StateType>()->values[j];
+    /* joint_trajectory_goal_.trajectory.points[0].velocities[j] = 0.0; */
+    joint_trajectory_goal.trajectory.joint_trajectory.points[0].velocities[j] = 0.0;
+    joint_trajectory_goal.trajectory.joint_trajectory.points[1].velocities[j] = 0.0;
+  }
+  /* joint_trajectory_goal_.trajectory.points[0].time_from_start = ros::Duration(0.0); */
+  /* joint_trajectory_goal_.trajectory.header.stamp = ros::Time::now() + ros::Duration(0.50); */
+  joint_trajectory_goal.trajectory.joint_trajectory.points[0].time_from_start = ros::Duration(0.0);
+  joint_trajectory_goal.trajectory.joint_trajectory.points[1].time_from_start = ros::Duration(1.0);
+  joint_trajectory_goal.trajectory.joint_trajectory.header.stamp = ros::Time::now() + ros::Duration(0.5);
+
+  trajectory_client_->sendGoal(joint_trajectory_goal);
+}
+
+void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
+{
+  // make the previous root a child of this new root
+  Motion *prev_root = new_root->parent;
+  new_root->children.push_back(prev_root);
+  prev_root->parent = new_root;
+  // remove the new root from the children of the previous root
+  removeFromParent(new_root);
+  new_root->parent = nullptr;
+  // Re-calculate costs
+  new_root->cost = opt_->identityCost();
+  prev_root->incCost = opt_->motionCost(new_root->state, prev_root->state);
+  prev_root->cost = opt_->combineCosts(new_root->cost, prev_root->incCost);
+  current_root_ = new_root;
+  updateChildCosts(new_root);
+  rewireRoot();
+  // add the new current motion to the root rewiring queue so the neighboring nodes move along
+  // with the root.
+  /* rootRewireQueue_.push_front(new_root); */
+}
+
+void ompl::geometric::RTRRTstar::rewireRoot()
+{
+  std::deque<Motion *> rootRewireQueue;
+  std::set<Motion *> rootRewireSet;
+
+  rootRewireQueue.push_front(current_root_);
+  rootRewireSet.insert(current_root_);
+
+  rr_start_time_ = ros::Time::now();
+  int iterations = 0;
+  int toggle = 0;
+
+  /* while (!(rootRewireQueue.empty()) && (ros::Time::now() - rr_start_time_ < rr_time_allowed_)) */
+  while (!rootRewireQueue.empty())
+  {
+    iterations++;
+    rr_motion_ = rootRewireQueue.front();
+    rootRewireQueue.pop_front();
+    getNeighbors(rr_motion_, rr_nbh_);
+
+    int unique_count = 0;
+    for (std::size_t k=0; k<rr_nbh_.size(); k++)
+    {
+      if (!rootRewireSet.count(rr_nbh_[k]))
+        unique_count++;
+    }
+    if (unique_count > 0)
+    {
+      OMPL_INFORM("iteration '%d' gathered '%d' UNIQUE motions", iterations, unique_count);
+      OMPL_INFORM("Size of tree: '%d'", rr_nbh_.size());
+    }
+
+    for (std::size_t i = 0; i < rr_nbh_.size(); ++i)
+    {
+      if (rr_nbh_[i] != rr_motion_->parent)
+      {
+        base::Cost rrNbhIncCost = opt_->motionCost(rr_motion_->state, rr_nbh_[i]->state);
+        base::Cost rrNbhNewCost = opt_->combineCosts(rr_motion_->cost, rrNbhIncCost);
+        if (opt_->isCostBetterThan(rrNbhNewCost, rr_nbh_[i]->cost))
+        {
+          if ((!useKNearest_ || si_->distance(rr_nbh_[i]->state, rr_motion_->state) < maxDistance_) &&
+              si_->checkMotion(rr_motion_->state, rr_nbh_[i]->state))
+          {
+            // Remove this node from its parent list
+            removeFromParent(rr_nbh_[i]);
+
+            // Add this node to the new parent
+            rr_nbh_[i]->parent = rr_motion_;
+            rr_nbh_[i]->incCost = rrNbhIncCost;
+            rr_nbh_[i]->cost = rrNbhNewCost;
+            rr_nbh_[i]->parent->children.push_back(rr_nbh_[i]);
+
+            // Update the costs of the node's children
+            updateChildCosts(rr_nbh_[i]);
+
+            // TODO: should I set checkForSolution = true here?
+          }
+        }
+      }
+      if (rootRewireSet.insert(rr_nbh_[i]).second == true)
+      {
+        if (toggle != 1)
+        {
+          OMPL_INFORM("SWITCH: INSERTING INTO ROOT REWIRE SET. iteration: '%d'", iterations);
+          toggle = 1;
+        }
+        rootRewireQueue.push_back(rr_nbh_[i]);
+      }
+      else // rootRewireSet.insert(rr_nbh_[i]).second = false
+      {
+        if (toggle != 2)
+        {
+          OMPL_INFORM("SWITCH: NOT INSERTING INTO ROOT REWIRE SET. iteration: '%d'", iterations);
+          toggle = 2;
+        }
+      }
+    }
+  }
+  OMPL_INFORM("Root rewire completed '%d' iterations", iterations);
+  OMPL_INFORM("Root rewire queue size: '%d'", rootRewireQueue.size());
+}
+
+void ompl::geometric::RTRRTstar::evalRoot(Motion *goal)
+{
+  Motion *root = goal;
+  while (root->parent)
+    root = root->parent;
+  printStateValues(root->state);
+}
+
+void ompl::geometric::RTRRTstar::printStateValues(base::State *state)
+{
+  for (int i=0; i<7; i++)
+  {
+    OMPL_INFORM("State '%d': '%f'", i, state->as<base::RealVectorStateSpace::StateType>()->values[i]);
+  }
+}
+
+void ompl::geometric::RTRRTstar::getNeighbors(Motion *motion, std::vector<Motion *> &nbh) const
 {
     auto cardDbl = static_cast<double>(nn_->size() + 1u);
     if (useKNearest_)
     {
         //- k-nearest RRT*
         unsigned int k = std::ceil(k_rrt_ * log(cardDbl));
+        /* OMPL_INFORM("k = '%d', k_rrt_ = '%f', cardDbl = '%f', log(cardDbl) = '%f'", k, k_rrt_, cardDbl, log(cardDbl)); */
         nn_->nearestK(motion, k, nbh);
     }
     else
     {
         double r = std::min(
             maxDistance_, r_rrt_ * std::pow(log(cardDbl) / cardDbl, 1 / static_cast<double>(si_->getStateDimension())));
-        nn_->nearestR(motion, r, nbh);
+        /* nn_->nearestR(motion, r, nbh); */
+        nn_->nearestR(motion, maxDistance_, nbh);
     }
 }
 
-void ompl::geometric::RRTstar::removeFromParent(Motion *m)
+void ompl::geometric::RTRRTstar::removeFromParent(Motion *m)
 {
     for (auto it = m->parent->children.begin(); it != m->parent->children.end(); ++it)
     {
@@ -629,17 +1012,26 @@ void ompl::geometric::RRTstar::removeFromParent(Motion *m)
     }
 }
 
-void ompl::geometric::RRTstar::updateChildCosts(Motion *m)
+void ompl::geometric::RTRRTstar::updateChildCosts(Motion *m)
 {
     for (std::size_t i = 0; i < m->children.size(); ++i)
     {
+      if (m->valid)
+      {
         m->children[i]->cost = opt_->combineCosts(m->cost, m->children[i]->incCost);
         updateChildCosts(m->children[i]);
+      }
+      else
+      {
+        m->children[i]->cost = base::Cost(std::numeric_limits<double>::max());
+        m->children[i]->valid = false;
+      }
     }
 }
 
-void ompl::geometric::RRTstar::freeMemory()
+void ompl::geometric::RTRRTstar::freeMemory()
 {
+  OMPL_WARN("DWYDBG: freeMemory called in RTRRTstar");
     if (nn_)
     {
         std::vector<Motion *> motions;
@@ -653,7 +1045,7 @@ void ompl::geometric::RRTstar::freeMemory()
     }
 }
 
-void ompl::geometric::RRTstar::getPlannerData(base::PlannerData &data) const
+void ompl::geometric::RTRRTstar::getPlannerData(base::PlannerData &data) const
 {
     Planner::getPlannerData(data);
 
@@ -673,7 +1065,7 @@ void ompl::geometric::RRTstar::getPlannerData(base::PlannerData &data) const
     }
 }
 
-int ompl::geometric::RRTstar::pruneTree(const base::Cost &pruneTreeCost)
+int ompl::geometric::RTRRTstar::pruneTree(const base::Cost &pruneTreeCost)
 {
     // Variable
     // The percent improvement (expressed as a [0,1] fraction) in cost
@@ -872,7 +1264,7 @@ int ompl::geometric::RRTstar::pruneTree(const base::Cost &pruneTreeCost)
     return numPruned;
 }
 
-void ompl::geometric::RRTstar::addChildrenToList(std::queue<Motion *, std::deque<Motion *>> *motionList, Motion *motion)
+void ompl::geometric::RTRRTstar::addChildrenToList(std::queue<Motion *, std::deque<Motion *>> *motionList, Motion *motion)
 {
     for (auto &child : motion->children)
     {
@@ -880,7 +1272,7 @@ void ompl::geometric::RRTstar::addChildrenToList(std::queue<Motion *, std::deque
     }
 }
 
-bool ompl::geometric::RRTstar::keepCondition(const Motion *motion, const base::Cost &threshold) const
+bool ompl::geometric::RTRRTstar::keepCondition(const Motion *motion, const base::Cost &threshold) const
 {
     // We keep if the cost-to-come-heuristic of motion is <= threshold, by checking
     // if !(threshold < heuristic), as if b is not better than a, then a is better than, or equal to, b
@@ -893,7 +1285,7 @@ bool ompl::geometric::RRTstar::keepCondition(const Motion *motion, const base::C
     return !opt_->isCostBetterThan(threshold, solutionHeuristic(motion));
 }
 
-ompl::base::Cost ompl::geometric::RRTstar::solutionHeuristic(const Motion *motion) const
+ompl::base::Cost ompl::geometric::RTRRTstar::solutionHeuristic(const Motion *motion) const
 {
     base::Cost costToCome;
     if (useAdmissibleCostToCome_)
@@ -919,7 +1311,7 @@ ompl::base::Cost ompl::geometric::RRTstar::solutionHeuristic(const Motion *motio
     return opt_->combineCosts(costToCome, costToGo);            // add the two costs
 }
 
-void ompl::geometric::RRTstar::setTreePruning(const bool prune)
+void ompl::geometric::RTRRTstar::setTreePruning(const bool prune)
 {
     if (static_cast<bool>(opt_) == true)
     {
@@ -939,7 +1331,7 @@ void ompl::geometric::RRTstar::setTreePruning(const bool prune)
     useTreePruning_ = prune;
 }
 
-void ompl::geometric::RRTstar::setPrunedMeasure(bool informedMeasure)
+void ompl::geometric::RTRRTstar::setPrunedMeasure(bool informedMeasure)
 {
     if (static_cast<bool>(opt_) == true)
     {
@@ -982,7 +1374,7 @@ void ompl::geometric::RRTstar::setPrunedMeasure(bool informedMeasure)
     }
 }
 
-void ompl::geometric::RRTstar::setInformedSampling(bool informedSampling)
+void ompl::geometric::RTRRTstar::setInformedSampling(bool informedSampling)
 {
     if (static_cast<bool>(opt_) == true)
     {
@@ -1030,7 +1422,7 @@ void ompl::geometric::RRTstar::setInformedSampling(bool informedSampling)
     }
 }
 
-void ompl::geometric::RRTstar::setSampleRejection(const bool reject)
+void ompl::geometric::RTRRTstar::setSampleRejection(const bool reject)
 {
     if (static_cast<bool>(opt_) == true)
     {
@@ -1066,7 +1458,7 @@ void ompl::geometric::RRTstar::setSampleRejection(const bool reject)
     }
 }
 
-void ompl::geometric::RRTstar::setOrderedSampling(bool orderSamples)
+void ompl::geometric::RTRRTstar::setOrderedSampling(bool orderSamples)
 {
     // Make sure we're using some type of informed sampling
     if (useInformedSampling_ == false && useRejectionSampling_ == false)
@@ -1094,7 +1486,7 @@ void ompl::geometric::RRTstar::setOrderedSampling(bool orderSamples)
     }
 }
 
-void ompl::geometric::RRTstar::allocSampler()
+void ompl::geometric::RTRRTstar::allocSampler()
 {
     // Allocate the appropriate type of sampler.
     if (useInformedSampling_)
@@ -1123,7 +1515,7 @@ void ompl::geometric::RRTstar::allocSampler()
     // No else
 }
 
-bool ompl::geometric::RRTstar::sampleUniform(base::State *statePtr)
+bool ompl::geometric::RTRRTstar::sampleUniform(base::State *statePtr)
 {
     // Use the appropriate sampler
     if (useInformedSampling_ || useRejectionSampling_)
@@ -1144,7 +1536,7 @@ bool ompl::geometric::RRTstar::sampleUniform(base::State *statePtr)
     }
 }
 
-void ompl::geometric::RRTstar::calculateRewiringLowerBounds()
+void ompl::geometric::RTRRTstar::calculateRewiringLowerBounds()
 {
     const auto dimDbl = static_cast<double>(si_->getStateDimension());
 

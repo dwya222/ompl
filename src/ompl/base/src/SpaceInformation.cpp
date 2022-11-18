@@ -57,7 +57,6 @@ ompl::base::SpaceInformation::SpaceInformation(StateSpacePtr space) : stateSpace
 
 void ompl::base::SpaceInformation::setup()
 {
-    OMPL_WARN("in SpaceInformation::setup()");
     if (!stateValidityChecker_)
     {
         stateValidityChecker_ = std::make_shared<AllValidStateValidityChecker>(this);
@@ -67,16 +66,13 @@ void ompl::base::SpaceInformation::setup()
     if (!motionValidator_)
         setDefaultMotionValidator();
 
-    OMPL_WARN("running stateSpace->setup()");
     stateSpace_->setup();
-    OMPL_WARN("ran stateSpace->setup()");
     if (stateSpace_->getDimension() <= 0)
         throw Exception("The dimension of the state space we plan in must be > 0");
 
     params_.clear();
     params_.include(stateSpace_->params());
 
-    OMPL_WARN("Changing setup_ to true in setup()");
     setup_ = true;
 }
 

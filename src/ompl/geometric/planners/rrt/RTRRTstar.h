@@ -34,8 +34,8 @@
 
 /* Authors: Alejandro Perez, Sertac Karaman, Ryan Luna, Luis G. Torres, Ioan Sucan, Javier V Gomez, Jonathan Gammell */
 
-#ifndef OMPL_GEOMETRIC_PLANNERS_RRT_RRTSTAR_
-#define OMPL_GEOMETRIC_PLANNERS_RRT_RRTSTAR_
+#ifndef OMPL_GEOMETRIC_PLANNERS_RRT_RTRRTSTAR_
+#define OMPL_GEOMETRIC_PLANNERS_RRT_RTRRTSTAR_
 
 #include "ompl/geometric/planners/PlannerIncludes.h"
 #include "ompl/base/OptimizationObjective.h"
@@ -48,15 +48,25 @@
 #include <utility>
 #include <list>
 
+#include <ros/ros.h>
+#include <control_msgs/FollowJointTrajectoryAction.h>
+#include <moveit_msgs/ExecuteTrajectoryAction.h>
+#include <moveit_msgs/PlanningScene.h>
+#include <actionlib/client/simple_action_client.h>
+#include <std_msgs/Float64MultiArray.h>
+
+/* typedef actionlib::SimpleActionClient<control_msgs::FollowJointTrajectoryAction> TrajectoryClient; */
+typedef actionlib::SimpleActionClient<moveit_msgs::ExecuteTrajectoryAction> TrajectoryClient;
+
 namespace ompl
 {
     namespace geometric
     {
         /**
-           @anchor gRRTstar
+           @anchor gRTRRTstar
            @par Short description
-           \ref gRRTstar "RRT*" (optimal RRT) is an asymptotically-optimal incremental
-           sampling-based motion planning algorithm. \ref gRRTstar "RRT*" algorithm is
+           \ref gRTRRTstar "RRT*" (optimal RRT) is an asymptotically-optimal incremental
+           sampling-based motion planning algorithm. \ref gRTRRTstar "RRT*" algorithm is
            guaranteed to converge to an optimal solution, while its
            running time is guaranteed to be a constant factor of the
            running time of the \ref gRRT "RRT". The notion of optimality is with
@@ -71,12 +81,12 @@ namespace ompl
         */
 
         /** \brief Optimal Rapidly-exploring Random Trees */
-        class RRTstar : public base::Planner
+        class RTRRTstar : public base::Planner
         {
         public:
-            RRTstar(const base::SpaceInformationPtr &si);
+            RTRRTstar(const base::SpaceInformationPtr &si);
 
-            ~RRTstar() override;
+            ~RTRRTstar() override;
 
             void getPlannerData(base::PlannerData &data) const override;
 
@@ -335,7 +345,7 @@ namespace ompl
             public:
                 /** \brief Constructor that allocates memory for the state. This constructor automatically allocates
                  * memory for \e state, \e cost, and \e incCost */
-                Motion(const base::SpaceInformationPtr &si) : state(si->allocState()), parent(nullptr), inGoal(false)
+                Motion(const base::SpaceInformationPtr &si) : state(si->allocState()), parent(nullptr), inGoal(false), valid(true)
                 {
                 }
 
@@ -359,6 +369,10 @@ namespace ompl
 
                 /** \brief The set of motions descending from the current motion */
                 std::vector<Motion *> children;
+
+                /** \brief Set to false if an obstacle blocks this motion*/
+                bool valid;
+
             };
 
             /** \brief Create the samplers */
@@ -522,6 +536,34 @@ namespace ompl
             {
                 return std::to_string(bestCost().value());
             }
+
+            Motion* getNextMotion(Motion *last_motion);
+            void sendTrajectoryGoalFromMotion(Motion *next_motion);
+            void changeRoot(Motion *new_root);
+            void rewireRoot();
+            void evalRoot(Motion *goal);
+            void printStateValues(base::State *state);
+            void newGoalCallback(const std_msgs::Float64MultiArray new_goal_msg);
+            void sceneChangedCallback(const moveit_msgs::PlanningScene planning_scene_msg);
+            bool scene_changed_;
+            std::vector<double>* new_goal_vec_;
+            std::vector<Motion *> rr_nbh_;
+            std::vector<base::Cost> rr_costs_;
+            std::vector<base::Cost> rr_inc_costs_;
+            std::vector<std::size_t> rr_sorted_cost_indices_;
+            std::vector<int> rr_valid_;
+            ros::Time rr_start_time_;
+            ros::Duration rr_time_allowed_;
+            Motion *rr_motion_;
+            Motion *current_root_;
+            ros::NodeHandle nh_;
+            ros::Subscriber new_goal_sub_;
+            ros::Subscriber scene_changed_sub_;
+            TrajectoryClient* trajectory_client_;
+            // Real panda controller
+            /* control_msgs::FollowJointTrajectoryGoal joint_trajectory_goal_; */
+            // Sim controller
+            /* moveit_msgs::ExecuteTrajectoryGoal joint_trajectory_goal_; */
         };
     }
 }

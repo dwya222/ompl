@@ -21,6 +21,7 @@
   <build_depend>opende</build_depend>
   <build_depend>libflann-dev</build_depend>
   <build_depend>roscpp</build_depend>
+  <build_depend>moveit_msgs</build_depend>
 
   <build_export_depend>roscpp</build_export_depend>
 
