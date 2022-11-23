@@ -619,26 +619,24 @@ inline bool ompl::geometric::RRTstar::fileExists(const std::string& name)
 
 void ompl::geometric::RRTstar::savePathInfo(std::vector<Motion *> solution_path)
 {
-  base::State *goal_state = solution_path[solution_path.size() - 1]->state;
+  base::State *goal_state = solution_path[0]->state;
   Json::Value goal_arr(Json::arrayValue);
-  for (int i=0; i<7; i++)
+  for (int i=0; i < 7; i++)
   {
     goal_arr.append(goal_state->as<base::RealVectorStateSpace::StateType>()->values[i]);
   }
   path_info_json_["Goal"] = goal_arr;
 
   base::State *step_state;
-  int step_num = 0;
-  for (int j = 0; j < solution_path.size(); j++)
+  for (int j = solution_path.size() - 1, ind = 0; j > -1; j--, ind++)
   {
-    step_num++;
     step_state = solution_path[j]->state;
     Json::Value step_arr(Json::arrayValue);
     for (int k=0; k<7; k++)
     {
       step_arr.append(step_state->as<base::RealVectorStateSpace::StateType>()->values[k]);
     }
-    path_info_json_["Steps"]["Step" + std::to_string(step_num)] = step_arr;
+    path_info_json_["States"][ind] = step_arr;
   }
 
   std::string ee_control_path = ros::package::getPath("end_effector_control");

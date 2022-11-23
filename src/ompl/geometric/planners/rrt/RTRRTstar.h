@@ -550,7 +550,7 @@ namespace ompl
             void sceneChangedCallback(const moveit_msgs::PlanningScene planning_scene_msg);
             bool scene_changed_;
             int goal_num_;
-            int step_num_;
+            int state_num_;
             Json::Value path_info_json_;
             std::vector<double>* new_goal_vec_;
             std::vector<Motion *> rr_nbh_;

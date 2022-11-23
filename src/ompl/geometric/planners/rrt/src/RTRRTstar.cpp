@@ -105,7 +105,7 @@ ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
     /* useKNearest_ = false; */
     new_goal_vec_ = nullptr;
     goal_num_ = 0;
-    step_num_ = 0;
+    state_num_ = 0;
     // flag for when motions needs to be checked
     // TODO: need to change the flag when an obstacle is moved/the scene is updated
     scene_changed_ = false;
@@ -331,6 +331,7 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
         if (new_goal_vec_)
         {
           OMPL_WARN("New goal state detected changing Planner goal and removing old solutions");
+          /* setGoalState(new_goal_vec_); // COULD ALSO JUST DO THIS IN THE CALLBACK*/
           base::State *gstate = si_->allocState();
           int i = 0;
           for (std::vector<double>::iterator it = (*new_goal_vec_).begin(); it != (*new_goal_vec_).end(); it++, i++)
@@ -566,102 +567,102 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
             }
             else  // if not delayCC
             {
-                motion->incCost = opt_->motionCost(nmotion->state, motion->state);
-                motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
-                // find which one we connect the new state to
-                for (std::size_t i = 0; i < nbh.size(); ++i)
+              motion->incCost = opt_->motionCost(nmotion->state, motion->state);
+              motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
+              // find which one we connect the new state to
+              for (std::size_t i = 0; i < nbh.size(); ++i)
+              {
+                if (nbh[i] != nmotion)
                 {
-                    if (nbh[i] != nmotion)
+                  incCosts[i] = opt_->motionCost(nbh[i]->state, motion->state);
+                  costs[i] = opt_->combineCosts(nbh[i]->cost, incCosts[i]);
+                  if (opt_->isCostBetterThan(costs[i], motion->cost))
+                  {
+                    if ((!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
+                        si_->checkMotion(nbh[i]->state, motion->state))
                     {
-                        incCosts[i] = opt_->motionCost(nbh[i]->state, motion->state);
-                        costs[i] = opt_->combineCosts(nbh[i]->cost, incCosts[i]);
-                        if (opt_->isCostBetterThan(costs[i], motion->cost))
-                        {
-                            if ((!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
-                                si_->checkMotion(nbh[i]->state, motion->state))
-                            {
-                                motion->incCost = incCosts[i];
-                                motion->cost = costs[i];
-                                motion->parent = nbh[i];
-                                valid[i] = 1;
-                            }
-                            else
-                                valid[i] = -1;
-                        }
+                      motion->incCost = incCosts[i];
+                      motion->cost = costs[i];
+                      motion->parent = nbh[i];
+                      valid[i] = 1;
                     }
                     else
-                    {
-                        incCosts[i] = motion->incCost;
-                        costs[i] = motion->cost;
-                        valid[i] = 1;
-                    }
+                      valid[i] = -1;
+                  }
                 }
+                else
+                {
+                  incCosts[i] = motion->incCost;
+                  costs[i] = motion->cost;
+                  valid[i] = 1;
+                }
+              }
             }
 
             if (useNewStateRejection_)
             {
-                if (opt_->isCostBetterThan(solutionHeuristic(motion), bestCost_))
-                {
-                    nn_->add(motion);
-                    motion->parent->children.push_back(motion);
-                }
-                else  // If the new motion does not improve the best cost it is ignored.
-                {
-                    si_->freeState(motion->state);
-                    delete motion;
-                    continue;
-                }
+              if (opt_->isCostBetterThan(solutionHeuristic(motion), bestCost_))
+              {
+                nn_->add(motion);
+                motion->parent->children.push_back(motion);
+              }
+              else  // If the new motion does not improve the best cost it is ignored.
+              {
+                si_->freeState(motion->state);
+                delete motion;
+                continue;
+              }
             }
             else
             {
-                // add motion to the tree
-                nn_->add(motion);
-                motion->parent->children.push_back(motion);
+              // add motion to the tree
+              nn_->add(motion);
+              motion->parent->children.push_back(motion);
             }
 
             bool checkForSolution = false;
             for (std::size_t i = 0; i < nbh.size(); ++i)
             {
-                if (nbh[i] != motion->parent)
+              if (nbh[i] != motion->parent)
+              {
+                base::Cost nbhIncCost;
+                if (symCost)
+                  nbhIncCost = incCosts[i];
+                else
+                  nbhIncCost = opt_->motionCost(motion->state, nbh[i]->state);
+                base::Cost nbhNewCost = opt_->combineCosts(motion->cost, nbhIncCost);
+                if (opt_->isCostBetterThan(nbhNewCost, nbh[i]->cost))
                 {
-                    base::Cost nbhIncCost;
-                    if (symCost)
-                        nbhIncCost = incCosts[i];
-                    else
-                        nbhIncCost = opt_->motionCost(motion->state, nbh[i]->state);
-                    base::Cost nbhNewCost = opt_->combineCosts(motion->cost, nbhIncCost);
-                    if (opt_->isCostBetterThan(nbhNewCost, nbh[i]->cost))
-                    {
-                        bool motionValid;
-                        if (valid[i] == 0)
-                        {
-                            motionValid =
-                                (!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
-                                si_->checkMotion(motion->state, nbh[i]->state);
-                        }
-                        else
-                        {
-                            motionValid = (valid[i] == 1);
-                        }
+                  bool motionValid;
+                  if (valid[i] == 0)
+                  {
+                    motionValid =
+                      (!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
+                      si_->checkMotion(motion->state, nbh[i]->state);
+                  }
+                  else
+                  {
+                    motionValid = (valid[i] == 1);
+                  }
 
-                        if (motionValid)
-                        {
-                            // Remove this node from its parent list
-                            removeFromParent(nbh[i]);
+                  if (motionValid)
+                  {
+                    // Remove this node from its parent list
+                    removeFromParent(nbh[i]);
 
-                            // Add this node to the new parent
-                            nbh[i]->parent = motion;
-                            nbh[i]->incCost = nbhIncCost;
-                            nbh[i]->cost = nbhNewCost;
-                            nbh[i]->parent->children.push_back(nbh[i]);
+                    // Add this node to the new parent
+                    nbh[i]->parent = motion;
+                    nbh[i]->incCost = nbhIncCost;
+                    nbh[i]->cost = nbhNewCost;
+                    nbh[i]->parent->children.push_back(nbh[i]);
 
-                            // Update the costs of the node's children
-                            updateChildCosts(nbh[i]);
+                    // Update the costs of the node's children
+                    updateChildCosts(nbh[i]);
 
-                            checkForSolution = true;
-                        }
-                    }
+                    checkForSolution = true;
+                  }
                 }
+              }
             }
 
             // Add the new motion to the goalMotion_ list, if it satisfies the goal
@@ -677,82 +678,83 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
             // Checking for solution or iterative improvement
             if (checkForSolution)
             {
-                bool updatedSolution = false;
-                if (!bestGoalMotion_ && !goalMotions_.empty())
+              bool updatedSolution = false;
+              if (!bestGoalMotion_ && !goalMotions_.empty())
+              {
+                // We have found our first solution, store it as the best. We only add one
+                // vertex at a time, so there can only be one goal vertex at this moment.
+                bestGoalMotion_ = goalMotions_.front();
+                bestCost_ = bestGoalMotion_->cost;
+                updatedSolution = true;
+
+                OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %u iterations (%u "
+                            "vertices in the graph)",
+                            getName().c_str(), bestCost_.value(), iterations_, nn_->size());
+              }
+              else
+              {
+                // We already have a solution, iterate through the list of goal vertices
+                // and see if there's any improvement.
+                for (auto &goalMotion : goalMotions_)
                 {
-                    // We have found our first solution, store it as the best. We only add one
-                    // vertex at a time, so there can only be one goal vertex at this moment.
-                    bestGoalMotion_ = goalMotions_.front();
+                  // Is this goal motion better than the (current) best?
+                  if (opt_->isCostBetterThan(goalMotion->cost, bestCost_))
+                  {
+                    bestGoalMotion_ = goalMotion;
                     bestCost_ = bestGoalMotion_->cost;
                     updatedSolution = true;
+                    OMPL_INFORM("Found improved solution with cost '%.2f'", bestCost_.value());
 
-                    OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %u iterations (%u "
-                                "vertices in the graph)",
-                                getName().c_str(), bestCost_.value(), iterations_, nn_->size());
+                    // Check if it satisfies the optimization objective, if it does, break the for loop
+                    if (opt_->isSatisfied(bestCost_))
+                    {
+                      break;
+                    }
+                  }
                 }
-                else
+              }
+
+              if (updatedSolution)
+              {
+                /* OMPL_INFORM("Updated solution: outputting bestGoalMotion_->state"); */
+                /* for (int i=0; i<8; i++) */
+                /* { */
+                /*   OMPL_INFORM("rstate[%d]: '%f'", i, bestGoalMotion_->state->as<base::RealVectorStateSpace::StateType>()->values[i]); */
+                /* } */
+                if (useTreePruning_)
                 {
-                    // We already have a solution, iterate through the list of goal vertices
-                    // and see if there's any improvement.
-                    for (auto &goalMotion : goalMotions_)
-                    {
-                        // Is this goal motion better than the (current) best?
-                        if (opt_->isCostBetterThan(goalMotion->cost, bestCost_))
-                        {
-                            bestGoalMotion_ = goalMotion;
-                            bestCost_ = bestGoalMotion_->cost;
-                            updatedSolution = true;
-
-                            // Check if it satisfies the optimization objective, if it does, break the for loop
-                            if (opt_->isSatisfied(bestCost_))
-                            {
-                                break;
-                            }
-                        }
-                    }
+                  pruneTree(bestCost_);
                 }
 
-                if (updatedSolution)
+                if (intermediateSolutionCallback)
                 {
-                  /* OMPL_INFORM("Updated solution: outputting bestGoalMotion_->state"); */
-                  /* for (int i=0; i<8; i++) */
-                  /* { */
-                  /*   OMPL_INFORM("rstate[%d]: '%f'", i, bestGoalMotion_->state->as<base::RealVectorStateSpace::StateType>()->values[i]); */
-                  /* } */
-                    if (useTreePruning_)
-                    {
-                        pruneTree(bestCost_);
-                    }
+                  std::vector<const base::State *> spath;
+                  Motion *intermediate_solution =
+                      bestGoalMotion_->parent;  // Do not include goal state to simplify code.
 
-                    if (intermediateSolutionCallback)
-                    {
-                        std::vector<const base::State *> spath;
-                        Motion *intermediate_solution =
-                            bestGoalMotion_->parent;  // Do not include goal state to simplify code.
+                  // Push back until we find the start, but not the start itself
+                  while (intermediate_solution->parent != nullptr)
+                  {
+                    spath.push_back(intermediate_solution->state);
+                    intermediate_solution = intermediate_solution->parent;
+                  }
 
-                        // Push back until we find the start, but not the start itself
-                        while (intermediate_solution->parent != nullptr)
-                        {
-                            spath.push_back(intermediate_solution->state);
-                            intermediate_solution = intermediate_solution->parent;
-                        }
-
-                        intermediateSolutionCallback(this, spath, bestCost_);
-                    }
+                  intermediateSolutionCallback(this, spath, bestCost_);
                 }
+              }
             }
 
             // Checking for approximate solution (closest state found to the goal)
             if (goalMotions_.size() == 0 && distanceFromGoal < approxDist)
             {
-                approxGoalMotion = motion;
-                approxDist = distanceFromGoal;
+              approxGoalMotion = motion;
+              approxDist = distanceFromGoal;
             }
         }
 
         // terminate if a sufficient solution is found
         if (bestGoalMotion_ && opt_->isSatisfied(bestCost_))
-            break;
+          break;
     }
     // Save goal/path data
     std::string ee_control_path = ros::package::getPath("end_effector_control");
@@ -841,34 +843,39 @@ inline bool ompl::geometric::RTRRTstar::fileExists(const std::string& name)
 void ompl::geometric::RTRRTstar::storeStepInfo(Motion *goal, Motion *next, bool new_goal)
 {
   base::State *goal_state = goal->state;
-  base::State *prev_state = next->parent->state;
   base::State *next_state = next->state;
   if (new_goal)
   {
     goal_num_++;
-    step_num_ = 0;
+    state_num_ = 0;
     Json::Value goal_arr(Json::arrayValue);
     for (int i=0; i<7; i++)
     {
       goal_arr.append(goal_state->as<base::RealVectorStateSpace::StateType>()->values[i]);
     }
-    path_info_json_["Goals"]["Goal" + std::to_string(goal_num_)] = goal_arr;
+    path_info_json_["Goals"][goal_num_-1] = goal_arr;
   }
 
-  step_num_++;
-  Json::Value step_from_arr(Json::arrayValue);
-  for (int j=0; j<7; j++)
+  // Have to add the previous state as the start state if we're starting a new path
+  if (state_num_ == 0)
   {
-    step_from_arr.append(prev_state->as<base::RealVectorStateSpace::StateType>()->values[j]);
+    base::State *prev_state = next->parent->state;
+    Json::Value step_from_arr(Json::arrayValue);
+    for (int j=0; j<7; j++)
+    {
+      step_from_arr.append(prev_state->as<base::RealVectorStateSpace::StateType>()->values[j]);
+    }
+    path_info_json_["Goal" + std::to_string(goal_num_) + "States"][state_num_] = step_from_arr;
+    state_num_++;
   }
-  path_info_json_["Steps"]["Goal" + std::to_string(goal_num_)]["Step" + std::to_string(step_num_)]["From"] = step_from_arr;
 
   Json::Value step_to_arr(Json::arrayValue);
   for (int k=0; k<7; k++)
   {
     step_to_arr.append(next_state->as<base::RealVectorStateSpace::StateType>()->values[k]);
   }
-  path_info_json_["Steps"]["Goal" + std::to_string(goal_num_)]["Step" + std::to_string(step_num_)]["To"] = step_to_arr;
+  path_info_json_["Goal" + std::to_string(goal_num_) + "States"][state_num_] = step_to_arr;
+  state_num_++;
 }
 
 ompl::geometric::RTRRTstar::Motion* ompl::geometric::RTRRTstar::getNextMotion(Motion *last_motion)
