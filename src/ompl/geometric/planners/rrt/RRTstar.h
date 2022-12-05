@@ -319,6 +319,19 @@ namespace ompl
                 return numSampleAttempts_;
             }
 
+            /** \brief Controls whether the solution loop terminates on first solution or continues until the given
+             * planner termination condition is acheived. */
+            void setSolveOnce(bool solve_once)
+            {
+                useSolveOnce_ = solve_once;
+            }
+
+            /** \brief Get the state of solve once. */
+            bool getSolveOnce() const
+            {
+                return useSolveOnce_;
+            }
+
             unsigned int numIterations() const
             {
                 return iterations_;
@@ -490,6 +503,9 @@ namespace ompl
 
             /** \brief The number of attempts to make at informed sampling */
             unsigned int numSampleAttempts_{100u};
+
+            /** \brief Option to return first solution (and disregard planner termination condition. */
+            bool useSolveOnce_{false};
 
             /** \brief Option to create batches of samples and order them. */
             bool useOrderedSampling_{false};

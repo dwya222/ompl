@@ -89,6 +89,7 @@ ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
     Planner::declareParam<bool>("focus_search", this, &RRTstar::setFocusSearch, &RRTstar::getFocusSearch, "0,1");
     Planner::declareParam<unsigned int>("number_sampling_attempts", this, &RRTstar::setNumSamplingAttempts,
                                         &RRTstar::getNumSamplingAttempts, "10:10:100000");
+    Planner::declareParam<bool>("solve_once", this, &RRTstar::setSolveOnce, &RRTstar::getSolveOnce, "0,1");
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
@@ -105,6 +106,7 @@ void ompl::geometric::RRTstar::setup()
     tools::SelfConfig sc(si_, getName());
     sc.configurePlannerRange(maxDistance_);
     OMPL_WARN("maxDistance_: '%f'", maxDistance_);
+    OMPL_WARN("useSolveOnce_: '%d'", useSolveOnce_);
     if (!si_->getStateSpace()->hasSymmetricDistance() || !si_->getStateSpace()->hasSymmetricInterpolate())
     {
         OMPL_WARN("%s requires a state space with symmetric distance and symmetric interpolation.", getName().c_str());
@@ -545,8 +547,8 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             }
         }
 
-        // terminate if a sufficient solution is found
-        if (bestGoalMotion_ && opt_->isSatisfied(bestCost_))
+        // terminate if a sufficient solution is found (or if only solving once)
+        if (bestGoalMotion_ && (opt_->isSatisfied(bestCost_) || useSolveOnce_))
             break;
     }
 
