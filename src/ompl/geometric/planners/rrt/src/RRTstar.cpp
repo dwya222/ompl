@@ -643,14 +643,7 @@ void ompl::geometric::RRTstar::savePathInfo(std::vector<Motion *> solution_path)
   std::string dir_path = ee_control_path + "/data/planning/";
   std::string base_file_name = "RRTstar_run";
   std::string file_ext = ".json";
-  int file_version = 0;
-  std::string file_name = dir_path + base_file_name + std::to_string(file_version) + file_ext;
-
-  while (fileExists(file_name))
-  {
-    file_version++;
-    file_name = dir_path + base_file_name + std::to_string(file_version) + file_ext;
-  }
+  std::string file_name = dir_path + base_file_name + file_ext;
 
   std::ofstream output_file;
   output_file.open(file_name);
