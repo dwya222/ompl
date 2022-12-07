@@ -326,10 +326,22 @@ namespace ompl
                 useSolveOnce_ = solve_once;
             }
 
-            /** \brief Get the state of solve once. */
+            /** \brief Get the state of use solve once. */
             bool getSolveOnce() const
             {
                 return useSolveOnce_;
+            }
+
+            /** \brief Controls switching the initial goal state to a simple GoalState object before solving. */
+            void setSimpleGoal(bool simple_goal)
+            {
+                useSimpleGoal_ = simple_goal;
+            }
+
+            /** \brief Get the state of use simple goal. */
+            bool getSimpleGoal() const
+            {
+                return useSimpleGoal_;
             }
 
             unsigned int numIterations() const
@@ -506,6 +518,9 @@ namespace ompl
 
             /** \brief Option to return first solution (and disregard planner termination condition. */
             bool useSolveOnce_{false};
+
+            /** \brief Option to switch the GoalLazySamples goal state object to the more simple GoalState object. */
+            bool useSimpleGoal_{false};
 
             /** \brief Option to create batches of samples and order them. */
             bool useOrderedSampling_{false};

@@ -47,6 +47,8 @@
 #include "ompl/base/Goal.h"
 #include "ompl/base/goals/GoalSampleableRegion.h"
 #include "ompl/base/goals/GoalState.h"
+#include "ompl/base/goals/GoalStates.h"
+#include "ompl/base/goals/GoalLazySamples.h"
 #include "ompl/base/objectives/PathLengthOptimizationObjective.h"
 #include "ompl/base/samplers/InformedStateSampler.h"
 #include "ompl/base/samplers/informed/RejectionInfSampler.h"
@@ -90,6 +92,7 @@ ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
     Planner::declareParam<unsigned int>("number_sampling_attempts", this, &RRTstar::setNumSamplingAttempts,
                                         &RRTstar::getNumSamplingAttempts, "10:10:100000");
     Planner::declareParam<bool>("solve_once", this, &RRTstar::setSolveOnce, &RRTstar::getSolveOnce, "0,1");
+    Planner::declareParam<bool>("simple_goal", this, &RRTstar::setSimpleGoal, &RRTstar::getSimpleGoal, "0,1");
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
@@ -177,6 +180,26 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
 {
     checkValidity();
     base::Goal *goal = pdef_->getGoal().get();
+    if (useSimpleGoal_)
+    {
+      OMPL_INFORM("Switching goal object to GoalState object");
+      base::State* gstate_initial = si_->allocState();
+      if (base::GoalLazySamples* tmp_gls_initial = dynamic_cast<base::GoalLazySamples*>(goal))
+      {
+        while (!tmp_gls_initial->hasStates())
+        {
+          OMPL_INFORM("Waiting for goal states to be sampled");
+          continue;
+        }
+        // Extract State from GoalStates object
+        tmp_gls_initial->sampleGoal(gstate_initial);
+        // stop GoalLazySamples sampling thread
+        tmp_gls_initial->stopSampling();
+      }
+      // use setGoalState method to set simplified goal state
+      pdef_->setGoalState(gstate_initial);
+      goal = pdef_->getGoal().get();
+    }
     auto *goal_s = dynamic_cast<base::GoalSampleableRegion *>(goal);
 
     bool symCost = opt_->isSymmetric();
