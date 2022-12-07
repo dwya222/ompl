@@ -40,6 +40,7 @@
 #include "ompl/geometric/planners/PlannerIncludes.h"
 #include "ompl/base/OptimizationObjective.h"
 #include "ompl/datastructures/NearestNeighbors.h"
+#include "ompl/base/goals/GoalSampleableRegion.h"
 
 #include <limits>
 #include <vector>
@@ -538,6 +539,27 @@ namespace ompl
                 return std::to_string(bestCost().value());
             }
 
+            // Variables for separating out expansion
+            base::Goal *goal_;
+            base::GoalSampleableRegion *goal_s_;
+            Motion *approxGoalMotion_{nullptr};
+            double approxDist_ {std::numeric_limits<double>::infinity()};
+            std::vector<base::Cost> costs_;
+            std::vector<base::Cost> incCosts_;
+            std::vector<std::size_t> sortedCostIndices_;
+            unsigned int rewireTest_ {0};
+            unsigned int statesGenerated_ {0};
+            std::unique_ptr<CostIndexCompare> compareFn_ptr_;
+            std::unique_ptr<const base::ReportIntermediateSolutionFn> intermediateSolutionCallback_ptr_;
+            bool symCost_;
+            Motion *rmotion_{nullptr};
+            base::State *rstate_{nullptr};
+            base::State *xstate_{nullptr};
+            std::vector<Motion *> nbh_;
+            std::vector<int> valid_;
+            void expandTree();
+
+            // Variables for real-time/ROS implementation
             Motion* getNextMotion(Motion *last_motion);
             bool fileExists(const std::string& name);
             void storeStepInfo(Motion *goal, Motion *next, bool new_goal);
