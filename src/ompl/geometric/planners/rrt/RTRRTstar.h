@@ -545,7 +545,7 @@ namespace ompl
             void changeRoot(Motion *new_root);
             void rewireRoot();
             void evalRoot(Motion *goal);
-            void printStateValues(base::State *state);
+            void printStateValues(const base::State *state);
             void newGoalCallback(const std_msgs::Float64MultiArray new_goal_msg);
             void sceneChangedCallback(const moveit_msgs::PlanningScene planning_scene_msg);
             bool scene_changed_;

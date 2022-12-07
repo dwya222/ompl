@@ -47,6 +47,8 @@
 #include "ompl/base/Goal.h"
 #include "ompl/base/goals/GoalSampleableRegion.h"
 #include "ompl/base/goals/GoalState.h"
+#include "ompl/base/goals/GoalStates.h"
+#include "ompl/base/goals/GoalLazySamples.h"
 #include "ompl/base/objectives/PathLengthOptimizationObjective.h"
 #include "ompl/base/samplers/InformedStateSampler.h"
 #include "ompl/base/samplers/informed/RejectionInfSampler.h"
@@ -54,9 +56,6 @@
 #include "ompl/tools/config/SelfConfig.h"
 #include "ompl/util/GeometricEquations.h"
 #include "ompl/base/spaces/RealVectorStateSpace.h"
-#include "ompl/base/goals/GoalState.h"
-#include "ompl/base/goals/GoalStates.h"
-#include <ompl/base/goals/GoalLazySamples.h>
 
 #include <ros/ros.h>
 #include <control_msgs/FollowJointTrajectoryAction.h>
@@ -230,6 +229,23 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
 {
     checkValidity();
     base::Goal *goal = pdef_->getGoal().get();
+    OMPL_INFORM("Switching goal object to GoalState object");
+    base::State* gstate_initial = si_->allocState();
+    if (base::GoalLazySamples* tmp_gls_initial = dynamic_cast<base::GoalLazySamples*>(goal))
+    {
+      while (!tmp_gls_initial->hasStates())
+      {
+        OMPL_INFORM("Waiting for goal states to be sampled");
+        continue;
+      }
+      // Extract State from GoalStates object
+      tmp_gls_initial->sampleGoal(gstate_initial);
+      // stop GoalLazySamples sampling thread
+      tmp_gls_initial->stopSampling();
+    }
+    // use setGoalState method to set simplified goal state
+    pdef_->setGoalState(gstate_initial);
+    goal = pdef_->getGoal().get();
     auto *goal_s = dynamic_cast<base::GoalSampleableRegion *>(goal);
 
     bool symCost = opt_->isSymmetric();
@@ -331,40 +347,25 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
         if (new_goal_vec_)
         {
           OMPL_WARN("New goal state detected changing Planner goal and removing old solutions");
-          /* setGoalState(new_goal_vec_); // COULD ALSO JUST DO THIS IN THE CALLBACK*/
           base::State *gstate = si_->allocState();
           int i = 0;
           for (std::vector<double>::iterator it = (*new_goal_vec_).begin(); it != (*new_goal_vec_).end(); it++, i++)
           {
             gstate->as<base::RealVectorStateSpace::StateType>()->values[i] = *it;
           }
-          if (base::GoalLazySamples* tmp_gls = dynamic_cast<base::GoalLazySamples*>(pdef_->getGoal().get()))
-          {
-            tmp_gls->stopSampling();
-          }
-          // threshold for the GoalLazySamples object was 0.00000, but that doesn't work for
-          // this simpler GoalState object (joint state) that the new goal is
-          double threshold = 0.10000;
-          pdef_->setGoalState(gstate, threshold);
+          pdef_->setGoalState(gstate);
           checkValidity();
           goal = pdef_->getGoal().get();
           goal_s = dynamic_cast<base::GoalSampleableRegion *>(goal);
           // Remove previous solutions from goalMotions_ list
-          // TODO: may want to remove check that new goal state is different enough from old goal state that
-          // the old solutions are actually invalid
-          // TODO: also may want to check if there are any current motions in the tree that satisfy the new goal
           for (std::vector<Motion*>::iterator it = goalMotions_.begin(); it != goalMotions_.end();)
           {
             if (!goal->isSatisfied((*it)->state))
             {
               OMPL_INFORM("Removing motion from goalMotions_, goalMotions_ size: '%d'", goalMotions_.size());
               (*it)->inGoal = false;
-              // Shouldn't need to do this:
-              /* nn_->remove(*it); */
               goalMotions_.erase(it);
             }
-            // TODO: create a motion at this location, check if there are any nearest neighbors that satisfy the goal in
-            // case we already have a solution to the new goal state in the tree.
             else
               it++;
           }
@@ -374,8 +375,8 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
           new_goal_vec_ = nullptr;
         }
 
-        // If we have a path to goal, and the scene changed , then check that the path(s) to goal are collision free
-        // TODO: this collision detection should be done by the rewiring algorithms, not explicitly
+        // If we have a path to goal, and the scene changed, then check
+        // that the path(s) to goal are collision free
         if (!goalMotions_.empty() && scene_changed_)
         {
           for (std::vector<Motion*>::iterator it = goalMotions_.begin(); it != goalMotions_.end();)
@@ -1034,7 +1035,7 @@ void ompl::geometric::RTRRTstar::evalRoot(Motion *goal)
   printStateValues(root->state);
 }
 
-void ompl::geometric::RTRRTstar::printStateValues(base::State *state)
+void ompl::geometric::RTRRTstar::printStateValues(const ompl::base::State *state)
 {
   for (int i=0; i<7; i++)
   {
