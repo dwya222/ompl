@@ -407,15 +407,15 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
             bestGoalMotion_ = nullptr;
         }
 
-        // If we have a different bestGoalMotion_, then change the state we are headed to
-        // NOTE: only satisfied once with initial goal since we only have one motion in goalMotions_ after changing the
-        // goal
+        // If we have a different bestGoalMotion_, then change the state
+        // we are headed to
         if (bestGoalMotion_ != prevBestGoalMotion && trajectory_client_->getState().isDone())
-            /* && (ros::Time::now() - start_solution_loop > ros::Duration(15.0))) */
         {
-          // As long as we have not unset our bestGoalMotion_ (this may happen if our goal motion gets obstructed or the
-          // goal state changes), then we have a new or different bestGoalMotion_ so we want to change where we're
-          // headed (or start heading somewhere if we haven't started moving yet)
+          // As long as we haven't unset our bestGoalMotion_(which would
+          // happen if our goal motion was obstructed or the goal state
+          // changed), then we have a new or different bestGoalMotion_so
+          // we want to change where we're headed (or start heading
+          // somewhere if we haven't started moving yet)
           if (bestGoalMotion_ != nullptr)
           {
             next_motion = getNextMotion(bestGoalMotion_);
@@ -430,8 +430,9 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
           }
           prevBestGoalMotion = bestGoalMotion_;
         }
-        // If we've reached the motion we were moving to, either we reached the final goal or we need to start moving to
-        // the next goal
+        // If we've reached the motion we were moving to, either we
+        // reached the final goal or we need to start moving to the next
+        // goal
         if (arm_in_motion && trajectory_client_->getState().isDone())
         {
           arm_in_motion = false;
@@ -449,6 +450,8 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
             arm_in_motion = true;
             changeRoot(next_motion);
           }
+          expandTree(ros::Duration(0.5));
+          rewireRoot(ros::Duration(0.5));
         }
 
         expandTree();
@@ -524,307 +527,311 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
     return {newSolution != nullptr, bestGoalMotion_ == nullptr};
 }
 
-void ompl::geometric::RTRRTstar::expandTree()
+void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
 {
-  // sample random state (with goal biasing)
-  // Goal samples are only sampled until maxSampleCount() goals are in the tree, to prohibit duplicate goal
-  // states.
-  if (goal_s_ && goalMotions_.size() < goal_s_->maxSampleCount() && rng_.uniform01() < goalBias_ &&
-      goal_s_->canSample())
-  {
-    goal_s_->sampleGoal(rstate_);
-  }
-  else
-  {
-    // Attempt to generate a sample, if we fail (e.g., too many rejection attempts), skip the remainder of this
-    // loop and return to try again
-    if (!sampleUniform(rstate_))
-      return;
-      /* continue; */
-  }
-
-  // find closest state in the tree
-  Motion *nmotion = nn_->nearest(rmotion_);
-
-  if (*intermediateSolutionCallback_ptr_ && si_->equalStates(nmotion->state, rstate_))
-    return;
-    /* continue; */
-
-  base::State *dstate = rstate_;
-
-  // find state to add to the tree
-  double d = si_->distance(nmotion->state, rstate_);
-  if (d > maxDistance_)
-  {
-    si_->getStateSpace()->interpolate(nmotion->state, rstate_, maxDistance_ / d, xstate_);
-    dstate = xstate_;
-  }
-
-  // Check if the motion between the nearest state and the state to add is valid
-  if (si_->checkMotion(nmotion->state, dstate))
-  {
-    // create a motion
-    auto *motion = new Motion(si_);
-    si_->copyState(motion->state, dstate);
-    motion->parent = nmotion;
-    motion->incCost = opt_->motionCost(nmotion->state, motion->state);
-    motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
-
-    // Find nearby neighbors of the new motion
-    getNeighbors(motion, nbh_);
-
-    rewireTest_ += nbh_.size();
-    ++statesGenerated_;
-
-    // cache for distance computations
-    //
-    // Our cost caches only increase in size, so they're only
-    // resized if they can't fit the current neighborhood
-    if (costs_.size() < nbh_.size())
+  expand_tree_start_time_ = ros::Time::now();
+  // want a do while loop since we want to expand the tree once if
+  // time_to_expand = 0.0 seconds (which it does by default
+  do {
+    // sample random state (with goal biasing)
+    // Goal samples are only sampled until maxSampleCount() goals are in the tree, to prohibit duplicate goal
+    // states.
+    if (goal_s_ && goalMotions_.size() < goal_s_->maxSampleCount() && rng_.uniform01() < goalBias_ &&
+        goal_s_->canSample())
     {
-      costs_.resize(nbh_.size());
-      incCosts_.resize(nbh_.size());
-      sortedCostIndices_.resize(nbh_.size());
-    }
-
-    // cache for motion validity (only useful in a symmetric space)
-    //
-    // Our validity caches only increase in size, so they're
-    // only resized if they can't fit the current neighborhood
-    if (valid_.size() < nbh_.size())
-      valid_.resize(nbh_.size());
-    std::fill(valid_.begin(), valid_.begin() + nbh_.size(), 0);
-
-    // Finding the nearest neighbor to connect to
-    // By default, neighborhood states are sorted by cost, and collision checking
-    // is performed in increasing order of cost
-    if (delayCC_)
-    {
-      // calculate all costs_ and distances
-      for (std::size_t i = 0; i < nbh_.size(); ++i)
-      {
-        incCosts_[i] = opt_->motionCost(nbh_[i]->state, motion->state);
-        costs_[i] = opt_->combineCosts(nbh_[i]->cost, incCosts_[i]);
-      }
-
-      // sort the nodes
-      //
-      // we're using index-value pairs so that we can get at
-      // original, unsorted indices
-      for (std::size_t i = 0; i < nbh_.size(); ++i)
-        sortedCostIndices_[i] = i;
-      /* std::sort(sortedCostIndices_.begin(), sortedCostIndices_.begin() + nbh_.size(), compareFn); */
-      std::sort(sortedCostIndices_.begin(), sortedCostIndices_.begin() + nbh_.size(), *compareFn_ptr_);
-
-      // collision check until a valid motion is found
-      //
-      // ASYMMETRIC CASE: it's possible that none of these
-      // neighbors are valid. This is fine, because motion
-      // already has a connection to the tree through
-      // nmotion (with populated cost fields!).
-      for (std::vector<std::size_t>::const_iterator i = sortedCostIndices_.begin();
-           i != sortedCostIndices_.begin() + nbh_.size(); ++i)
-      {
-        if (nbh_[*i] == nmotion || ((!useKNearest_ || si_->distance(nbh_[*i]->state, motion->state) < maxDistance_) &&
-              si_->checkMotion(nbh_[*i]->state, motion->state)))
-        {
-          motion->incCost = incCosts_[*i];
-          motion->cost = costs_[*i];
-          motion->parent = nbh_[*i];
-          valid_[*i] = 1;
-          break;
-        }
-        else
-          valid_[*i] = -1;
-      }
-    }
-    else  // if not delayCC
-    {
-      motion->incCost = opt_->motionCost(nmotion->state, motion->state);
-      motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
-      // find which one we connect the new state to
-      for (std::size_t i = 0; i < nbh_.size(); ++i)
-      {
-        if (nbh_[i] != nmotion)
-        {
-          incCosts_[i] = opt_->motionCost(nbh_[i]->state, motion->state);
-          costs_[i] = opt_->combineCosts(nbh_[i]->cost, incCosts_[i]);
-          if (opt_->isCostBetterThan(costs_[i], motion->cost))
-          {
-            if ((!useKNearest_ || si_->distance(nbh_[i]->state, motion->state) < maxDistance_) &&
-                si_->checkMotion(nbh_[i]->state, motion->state))
-            {
-              motion->incCost = incCosts_[i];
-              motion->cost = costs_[i];
-              motion->parent = nbh_[i];
-              valid_[i] = 1;
-            }
-            else
-              valid_[i] = -1;
-          }
-        }
-        else
-        {
-          incCosts_[i] = motion->incCost;
-          costs_[i] = motion->cost;
-          valid_[i] = 1;
-        }
-      }
-    }
-
-    if (useNewStateRejection_)
-    {
-      if (opt_->isCostBetterThan(solutionHeuristic(motion), bestCost_))
-      {
-        nn_->add(motion);
-        motion->parent->children.push_back(motion);
-      }
-      else  // If the new motion does not improve the best cost it is ignored.
-      {
-        si_->freeState(motion->state);
-        delete motion;
-        return;
-        /* continue; */
-      }
+      goal_s_->sampleGoal(rstate_);
     }
     else
     {
-      // add motion to the tree
-      nn_->add(motion);
-      motion->parent->children.push_back(motion);
+      // Attempt to generate a sample, if we fail (e.g., too many rejection attempts), skip the remainder of this
+      // loop and return to try again
+      if (!sampleUniform(rstate_))
+        continue;
     }
 
-    bool checkForSolution = false;
-    for (std::size_t i = 0; i < nbh_.size(); ++i)
+    // find closest state in the tree
+    Motion *nmotion = nn_->nearest(rmotion_);
+
+    if (*intermediateSolutionCallback_ptr_ && si_->equalStates(nmotion->state, rstate_))
+      continue;
+
+    base::State *dstate = rstate_;
+
+    // find state to add to the tree
+    double d = si_->distance(nmotion->state, rstate_);
+    if (d > maxDistance_)
     {
-      if (nbh_[i] != motion->parent)
+      si_->getStateSpace()->interpolate(nmotion->state, rstate_, maxDistance_ / d, xstate_);
+      dstate = xstate_;
+    }
+
+    // Check if the motion between the nearest state and the state to add is valid
+    if (si_->checkMotion(nmotion->state, dstate))
+    {
+      // create a motion
+      auto *motion = new Motion(si_);
+      si_->copyState(motion->state, dstate);
+      motion->parent = nmotion;
+      motion->incCost = opt_->motionCost(nmotion->state, motion->state);
+      motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
+
+      // Find nearby neighbors of the new motion
+      getNeighbors(motion, nbh_);
+
+      rewireTest_ += nbh_.size();
+      ++statesGenerated_;
+
+      // cache for distance computations
+      //
+      // Our cost caches only increase in size, so they're only
+      // resized if they can't fit the current neighborhood
+      if (costs_.size() < nbh_.size())
       {
-        base::Cost nbhIncCost;
-        if (symCost_)
-          nbhIncCost = incCosts_[i];
-        else
-          nbhIncCost = opt_->motionCost(motion->state, nbh_[i]->state);
-        base::Cost nbhNewCost = opt_->combineCosts(motion->cost, nbhIncCost);
-        if (opt_->isCostBetterThan(nbhNewCost, nbh_[i]->cost))
+        costs_.resize(nbh_.size());
+        incCosts_.resize(nbh_.size());
+        sortedCostIndices_.resize(nbh_.size());
+      }
+
+      // cache for motion validity (only useful in a symmetric space)
+      //
+      // Our validity caches only increase in size, so they're
+      // only resized if they can't fit the current neighborhood
+      if (valid_.size() < nbh_.size())
+        valid_.resize(nbh_.size());
+      std::fill(valid_.begin(), valid_.begin() + nbh_.size(), 0);
+
+      // Finding the nearest neighbor to connect to
+      // By default, neighborhood states are sorted by cost, and collision checking
+      // is performed in increasing order of cost
+      if (delayCC_)
+      {
+        // calculate all costs_ and distances
+        for (std::size_t i = 0; i < nbh_.size(); ++i)
         {
-          bool motionValid;
-          if (valid_[i] == 0)
+          incCosts_[i] = opt_->motionCost(nbh_[i]->state, motion->state);
+          costs_[i] = opt_->combineCosts(nbh_[i]->cost, incCosts_[i]);
+        }
+
+        // sort the nodes
+        //
+        // we're using index-value pairs so that we can get at
+        // original, unsorted indices
+        for (std::size_t i = 0; i < nbh_.size(); ++i)
+          sortedCostIndices_[i] = i;
+        /* std::sort(sortedCostIndices_.begin(), sortedCostIndices_.begin() + nbh_.size(), compareFn); */
+        std::sort(sortedCostIndices_.begin(), sortedCostIndices_.begin() + nbh_.size(), *compareFn_ptr_);
+
+        // collision check until a valid motion is found
+        //
+        // ASYMMETRIC CASE: it's possible that none of these
+        // neighbors are valid. This is fine, because motion
+        // already has a connection to the tree through
+        // nmotion (with populated cost fields!).
+        for (std::vector<std::size_t>::const_iterator i = sortedCostIndices_.begin();
+             i != sortedCostIndices_.begin() + nbh_.size(); ++i)
+        {
+          if (nbh_[*i] == nmotion || ((!useKNearest_ || si_->distance(nbh_[*i]->state, motion->state) < maxDistance_) &&
+                si_->checkMotion(nbh_[*i]->state, motion->state)))
           {
-            motionValid =
-              (!useKNearest_ || si_->distance(nbh_[i]->state, motion->state) < maxDistance_) &&
-              si_->checkMotion(motion->state, nbh_[i]->state);
+            motion->incCost = incCosts_[*i];
+            motion->cost = costs_[*i];
+            motion->parent = nbh_[*i];
+            valid_[*i] = 1;
+            break;
+          }
+          else
+            valid_[*i] = -1;
+        }
+      }
+      else  // if not delayCC
+      {
+        motion->incCost = opt_->motionCost(nmotion->state, motion->state);
+        motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
+        // find which one we connect the new state to
+        for (std::size_t i = 0; i < nbh_.size(); ++i)
+        {
+          if (nbh_[i] != nmotion)
+          {
+            incCosts_[i] = opt_->motionCost(nbh_[i]->state, motion->state);
+            costs_[i] = opt_->combineCosts(nbh_[i]->cost, incCosts_[i]);
+            if (opt_->isCostBetterThan(costs_[i], motion->cost))
+            {
+              if ((!useKNearest_ || si_->distance(nbh_[i]->state, motion->state) < maxDistance_) &&
+                  si_->checkMotion(nbh_[i]->state, motion->state))
+              {
+                motion->incCost = incCosts_[i];
+                motion->cost = costs_[i];
+                motion->parent = nbh_[i];
+                valid_[i] = 1;
+              }
+              else
+                valid_[i] = -1;
+            }
           }
           else
           {
-            motionValid = (valid_[i] == 1);
-          }
-
-          if (motionValid)
-          {
-            // Remove this node from its parent list
-            removeFromParent(nbh_[i]);
-
-            // Add this node to the new parent
-            nbh_[i]->parent = motion;
-            nbh_[i]->incCost = nbhIncCost;
-            nbh_[i]->cost = nbhNewCost;
-            nbh_[i]->parent->children.push_back(nbh_[i]);
-
-            // Update the costs_ of the node's children
-            updateChildCosts(nbh_[i]);
-
-            checkForSolution = true;
+            incCosts_[i] = motion->incCost;
+            costs_[i] = motion->cost;
+            valid_[i] = 1;
           }
         }
       }
-    }
 
-    // Add the new motion to the goalMotion_ list, if it satisfies the goal
-    double distanceFromGoal;
-    if (goal_->isSatisfied(motion->state, &distanceFromGoal))
-    {
-      motion->inGoal = true;
-      goalMotions_.push_back(motion);
-      OMPL_INFORM("DWY: adding to goalMotions_. New goalMotions_ size: '%d'", goalMotions_.size());
-      checkForSolution = true;
-    }
-
-    // Checking for solution or iterative improvement
-    if (checkForSolution)
-    {
-      bool updatedSolution = false;
-      if (!bestGoalMotion_ && !goalMotions_.empty())
+      if (useNewStateRejection_)
       {
-        // We have found our first solution, store it as the best. We only add one
-        // vertex at a time, so there can only be one goal vertex at this moment.
-        bestGoalMotion_ = goalMotions_.front();
-        bestCost_ = bestGoalMotion_->cost;
-        updatedSolution = true;
-
-        OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %u iterations (%u "
-                    "vertices in the graph)",
-                    getName().c_str(), bestCost_.value(), iterations_, nn_->size());
+        if (opt_->isCostBetterThan(solutionHeuristic(motion), bestCost_))
+        {
+          nn_->add(motion);
+          motion->parent->children.push_back(motion);
+        }
+        else  // If the new motion does not improve the best cost it is ignored.
+        {
+          si_->freeState(motion->state);
+          delete motion;
+          continue;
+        }
       }
       else
       {
-        // We already have a solution, iterate through the list of goal vertices
-        // and see if there's any improvement.
-        for (auto &goalMotion : goalMotions_)
-        {
-          // Is this goal motion better than the (current) best?
-          if (opt_->isCostBetterThan(goalMotion->cost, bestCost_))
-          {
-            bestGoalMotion_ = goalMotion;
-            bestCost_ = bestGoalMotion_->cost;
-            updatedSolution = true;
-            OMPL_INFORM("Found improved solution with cost '%.2f'", bestCost_.value());
+        // add motion to the tree
+        nn_->add(motion);
+        motion->parent->children.push_back(motion);
+      }
 
-            // Check if it satisfies the optimization objective, if it does, break the for loop
-            if (opt_->isSatisfied(bestCost_))
+      bool checkForSolution = false;
+      for (std::size_t i = 0; i < nbh_.size(); ++i)
+      {
+        if (nbh_[i] != motion->parent)
+        {
+          base::Cost nbhIncCost;
+          if (symCost_)
+            nbhIncCost = incCosts_[i];
+          else
+            nbhIncCost = opt_->motionCost(motion->state, nbh_[i]->state);
+          base::Cost nbhNewCost = opt_->combineCosts(motion->cost, nbhIncCost);
+          if (opt_->isCostBetterThan(nbhNewCost, nbh_[i]->cost))
+          {
+            bool motionValid;
+            if (valid_[i] == 0)
             {
-              break;
+              motionValid =
+                (!useKNearest_ || si_->distance(nbh_[i]->state, motion->state) < maxDistance_) &&
+                si_->checkMotion(motion->state, nbh_[i]->state);
+            }
+            else
+            {
+              motionValid = (valid_[i] == 1);
+            }
+
+            if (motionValid)
+            {
+              // Remove this node from its parent list
+              removeFromParent(nbh_[i]);
+
+              // Add this node to the new parent
+              nbh_[i]->parent = motion;
+              nbh_[i]->incCost = nbhIncCost;
+              nbh_[i]->cost = nbhNewCost;
+              nbh_[i]->parent->children.push_back(nbh_[i]);
+
+              // Update the costs_ of the node's children
+              updateChildCosts(nbh_[i]);
+
+              checkForSolution = true;
             }
           }
         }
       }
 
-      if (updatedSolution)
+      // Add the new motion to the goalMotion_ list, if it satisfies the goal
+      double distanceFromGoal;
+      if (goal_->isSatisfied(motion->state, &distanceFromGoal))
       {
-        /* OMPL_INFORM("Updated solution: outputting bestGoalMotion_->state"); */
-        /* for (int i=0; i<8; i++) */
-        /* { */
-        /*   OMPL_INFORM("rstate[%d]: '%f'", i, bestGoalMotion_->state->as<base::RealVectorStateSpace::StateType>()->values[i]); */
-        /* } */
-        if (useTreePruning_)
+        motion->inGoal = true;
+        goalMotions_.push_back(motion);
+        OMPL_INFORM("DWY: adding to goalMotions_. New goalMotions_ size: '%d'", goalMotions_.size());
+        checkForSolution = true;
+      }
+
+      // Checking for solution or iterative improvement
+      if (checkForSolution)
+      {
+        bool updatedSolution = false;
+        if (!bestGoalMotion_ && !goalMotions_.empty())
         {
-          pruneTree(bestCost_);
+          // We have found our first solution, store it as the best. We only add one
+          // vertex at a time, so there can only be one goal vertex at this moment.
+          bestGoalMotion_ = goalMotions_.front();
+          bestCost_ = bestGoalMotion_->cost;
+          updatedSolution = true;
+
+          OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %u iterations (%u "
+                      "vertices in the graph)",
+                      getName().c_str(), bestCost_.value(), iterations_, nn_->size());
+        }
+        else
+        {
+          // We already have a solution, iterate through the list of goal vertices
+          // and see if there's any improvement.
+          for (auto &goalMotion : goalMotions_)
+          {
+            // Is this goal motion better than the (current) best?
+            if (opt_->isCostBetterThan(goalMotion->cost, bestCost_))
+            {
+              bestGoalMotion_ = goalMotion;
+              bestCost_ = bestGoalMotion_->cost;
+              updatedSolution = true;
+              OMPL_INFORM("Found improved solution with cost '%.2f'", bestCost_.value());
+
+              // Check if it satisfies the optimization objective, if it does, break the for loop
+              if (opt_->isSatisfied(bestCost_))
+              {
+                break;
+              }
+            }
+          }
         }
 
-        if (*intermediateSolutionCallback_ptr_)
+        if (updatedSolution)
         {
-          std::vector<const base::State *> spath;
-          Motion *intermediate_solution =
-              bestGoalMotion_->parent;  // Do not include goal state to simplify code.
-
-          // Push back until we find the start, but not the start itself
-          while (intermediate_solution->parent != nullptr)
+          /* OMPL_INFORM("Updated solution: outputting bestGoalMotion_->state"); */
+          /* for (int i=0; i<8; i++) */
+          /* { */
+          /*   OMPL_INFORM("rstate[%d]: '%f'", i, bestGoalMotion_->state->as<base::RealVectorStateSpace::StateType>()->values[i]); */
+          /* } */
+          if (useTreePruning_)
           {
-            spath.push_back(intermediate_solution->state);
-            intermediate_solution = intermediate_solution->parent;
+            pruneTree(bestCost_);
           }
 
-          (*intermediateSolutionCallback_ptr_)(this, spath, bestCost_);
+          if (*intermediateSolutionCallback_ptr_)
+          {
+            std::vector<const base::State *> spath;
+            Motion *intermediate_solution =
+                bestGoalMotion_->parent;  // Do not include goal state to simplify code.
+
+            // Push back until we find the start, but not the start itself
+            while (intermediate_solution->parent != nullptr)
+            {
+              spath.push_back(intermediate_solution->state);
+              intermediate_solution = intermediate_solution->parent;
+            }
+
+            (*intermediateSolutionCallback_ptr_)(this, spath, bestCost_);
+          }
         }
       }
-    }
 
-    // Checking for approximate solution (closest state found to the goal)
-    if (goalMotions_.size() == 0 && distanceFromGoal < approxDist_)
-    {
-      approxGoalMotion_ = motion;
-      approxDist_ = distanceFromGoal;
+      // Checking for approximate solution (closest state found to the goal)
+      if (goalMotions_.size() == 0 && distanceFromGoal < approxDist_)
+      {
+        approxGoalMotion_ = motion;
+        approxDist_ = distanceFromGoal;
+      }
     }
   }
+  while (ros::Time::now() - expand_tree_start_time_ > time_to_expand);
+  // TODO: add some logging for number of expansion iterations that occured...
 }
 
 void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
@@ -842,13 +849,12 @@ void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
   prev_root->cost = opt_->combineCosts(new_root->cost, prev_root->incCost);
   current_root_ = new_root;
   updateChildCosts(new_root);
-  rewireRoot();
   // add the new current motion to the root rewiring queue so the neighboring nodes move along
   // with the root.
   /* rootRewireQueue_.push_front(new_root); */
 }
 
-void ompl::geometric::RTRRTstar::rewireRoot()
+void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
 {
   std::deque<Motion *> rootRewireQueue;
   std::set<Motion *> rootRewireSet;
@@ -856,13 +862,17 @@ void ompl::geometric::RTRRTstar::rewireRoot()
   rootRewireQueue.push_front(current_root_);
   rootRewireSet.insert(current_root_);
 
-  rr_start_time_ = ros::Time::now();
+  root_rewire_start_time_ = ros::Time::now();
   int iterations = 0;
   int toggle = 0;
 
-  /* while (!(rootRewireQueue.empty()) && (ros::Time::now() - rr_start_time_ < rr_time_allowed_)) */
   while (!rootRewireQueue.empty())
   {
+    // if time_to_rewire is 0.0 seconds (default), then rewire until
+    // queue is empty
+    // TODO: test what happens to cost outcome if I allow rewiring to complete fully
+    if (time_to_rewire != ros::Duration(0.0) && ros::Time::now() - root_rewire_start_time_ > time_to_rewire)
+      break;
     iterations++;
     rr_motion_ = rootRewireQueue.front();
     rootRewireQueue.pop_front();
@@ -1021,7 +1031,7 @@ void ompl::geometric::RTRRTstar::sendTrajectoryGoalFromMotion(Motion *next_motio
   /* joint_trajectory_goal_.trajectory.header.stamp = ros::Time::now() + ros::Duration(0.50); */
   joint_trajectory_goal.trajectory.joint_trajectory.points[0].time_from_start = ros::Duration(0.0);
   joint_trajectory_goal.trajectory.joint_trajectory.points[1].time_from_start = ros::Duration(1.0);
-  joint_trajectory_goal.trajectory.joint_trajectory.header.stamp = ros::Time::now() + ros::Duration(0.5);
+  joint_trajectory_goal.trajectory.joint_trajectory.header.stamp = ros::Time::now() + ros::Duration(0.1);
 
   trajectory_client_->sendGoal(joint_trajectory_goal);
 }

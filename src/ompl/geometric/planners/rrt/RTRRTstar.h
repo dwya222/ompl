@@ -557,7 +557,8 @@ namespace ompl
             base::State *xstate_{nullptr};
             std::vector<Motion *> nbh_;
             std::vector<int> valid_;
-            void expandTree();
+            ros::Time expand_tree_start_time_;
+            void expandTree(ros::Duration time_to_expand=ros::Duration(0.5));
 
             // Variables for real-time/ROS implementation
             Motion* getNextMotion(Motion *last_motion);
@@ -565,7 +566,7 @@ namespace ompl
             void storeStepInfo(Motion *goal, Motion *next, bool new_goal);
             void sendTrajectoryGoalFromMotion(Motion *next_motion);
             void changeRoot(Motion *new_root);
-            void rewireRoot();
+            void rewireRoot(ros::Duration time_to_expand=ros::Duration(0.5));
             void evalRoot(Motion *goal);
             void printStateValues(const base::State *state);
             void newGoalCallback(const std_msgs::Float64MultiArray new_goal_msg);
@@ -580,7 +581,7 @@ namespace ompl
             std::vector<base::Cost> rr_inc_costs_;
             std::vector<std::size_t> rr_sorted_cost_indices_;
             std::vector<int> rr_valid_;
-            ros::Time rr_start_time_;
+            ros::Time root_rewire_start_time_;
             ros::Duration rr_time_allowed_;
             Motion *rr_motion_;
             Motion *current_root_;
