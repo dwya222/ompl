@@ -322,9 +322,7 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
     current_root_ = startMotions_[0];
     OMPL_WARN("Max distance: '%f'", maxDistance_);
     // Realtime variables (should initialize on the stack where possible)
-    bool arm_in_motion = false;
     bool goal_acheived = false;
-    Motion *prevBestGoalMotion = nullptr;
     Motion *next_motion = nullptr;
     moveit_msgs::ExecuteTrajectoryGoal trajectory_goal_msg;
     rr_time_allowed_ = ros::Duration(0.5);
@@ -407,49 +405,20 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
             bestGoalMotion_ = nullptr;
         }
 
-        // If we have a different bestGoalMotion_, then change the state
-        // we are headed to
-        if (bestGoalMotion_ != prevBestGoalMotion && trajectory_client_->getState().isDone())
+        // If our trajectory controller is done executing and we have a
+        // path to goal, then we can start executing a new trajectory now
+        if (trajectory_client_->getState().isDone() && bestGoalMotion_ != nullptr)
         {
-          // As long as we haven't unset our bestGoalMotion_(which would
-          // happen if our goal motion was obstructed or the goal state
-          // changed), then we have a new or different bestGoalMotion_so
-          // we want to change where we're headed (or start heading
-          // somewhere if we haven't started moving yet)
-          if (bestGoalMotion_ != nullptr)
-          {
-            next_motion = getNextMotion(bestGoalMotion_);
-            sendTrajectoryGoalFromMotion(next_motion);
-            storeStepInfo(bestGoalMotion_, next_motion, true);
-            arm_in_motion = true;
-            changeRoot(next_motion);
-          }
-          else
-          {
-            arm_in_motion = false;
-          }
-          prevBestGoalMotion = bestGoalMotion_;
-        }
-        // If we've reached the motion we were moving to, either we
-        // reached the final goal or we need to start moving to the next
-        // goal
-        if (arm_in_motion && trajectory_client_->getState().isDone())
-        {
-          arm_in_motion = false;
           if (next_motion == bestGoalMotion_)
           {
             OMPL_INFORM("GOAL ACHEIVED");
             goal_acheived = true;
             continue;
           }
-          else if (bestGoalMotion_ != nullptr)
-          {
-            next_motion = getNextMotion(bestGoalMotion_);
-            sendTrajectoryGoalFromMotion(next_motion);
-            storeStepInfo(bestGoalMotion_, next_motion, false);
-            arm_in_motion = true;
-            changeRoot(next_motion);
-          }
+          next_motion = getNextMotion(bestGoalMotion_);
+          sendTrajectoryGoalFromMotion(next_motion);
+          storeStepInfo(bestGoalMotion_, next_motion);
+          changeRoot(next_motion);
           expandTree(ros::Duration(0.5));
           rewireRoot(ros::Duration(0.5));
         }
@@ -946,11 +915,11 @@ inline bool ompl::geometric::RTRRTstar::fileExists(const std::string& name)
   return (stat (name.c_str(), &buffer) == 0);
 }
 
-void ompl::geometric::RTRRTstar::storeStepInfo(Motion *goal, Motion *next, bool new_goal)
+void ompl::geometric::RTRRTstar::storeStepInfo(Motion *goal, Motion *next)
 {
   base::State *goal_state = goal->state;
   base::State *next_state = next->state;
-  if (new_goal)
+  if (goal != prev_goal_)
   {
     goal_num_++;
     state_num_ = 0;
@@ -960,6 +929,7 @@ void ompl::geometric::RTRRTstar::storeStepInfo(Motion *goal, Motion *next, bool 
       goal_arr.append(goal_state->as<base::RealVectorStateSpace::StateType>()->values[i]);
     }
     path_info_json_["Goals"][goal_num_-1] = goal_arr;
+    prev_goal_ = goal;
   }
 
   // Have to add the previous state as the start state if we're starting a new path

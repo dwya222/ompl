@@ -563,7 +563,7 @@ namespace ompl
             // Variables for real-time/ROS implementation
             Motion* getNextMotion(Motion *last_motion);
             bool fileExists(const std::string& name);
-            void storeStepInfo(Motion *goal, Motion *next, bool new_goal);
+            void storeStepInfo(Motion *goal, Motion *next);
             void sendTrajectoryGoalFromMotion(Motion *next_motion);
             void changeRoot(Motion *new_root);
             void rewireRoot(ros::Duration time_to_expand=ros::Duration(0.5));
@@ -585,6 +585,7 @@ namespace ompl
             ros::Duration rr_time_allowed_;
             Motion *rr_motion_;
             Motion *current_root_;
+            Motion *prev_goal_ {nullptr};
             ros::NodeHandle nh_;
             ros::Subscriber new_goal_sub_;
             ros::Subscriber scene_changed_sub_;
