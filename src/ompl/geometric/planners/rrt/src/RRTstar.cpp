@@ -187,10 +187,8 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
       if (base::GoalLazySamples* tmp_gls_initial = dynamic_cast<base::GoalLazySamples*>(goal))
       {
         while (!tmp_gls_initial->hasStates())
-        {
-          OMPL_INFORM("Waiting for goal states to be sampled");
+          // Wait for goal states to be sampled
           continue;
-        }
         // Extract State from GoalStates object
         tmp_gls_initial->sampleGoal(gstate_initial);
         // stop GoalLazySamples sampling thread

@@ -157,7 +157,6 @@ void ompl::geometric::RTRRTstar::setup()
   Planner::setup();
   tools::SelfConfig sc(si_, getName());
   sc.configurePlannerRange(maxDistance_); // Originally 6.712660
-  OMPL_WARN("maxDistance_: '%f'", maxDistance_);
   if (!si_->getStateSpace()->hasSymmetricDistance() || !si_->getStateSpace()->hasSymmetricInterpolate())
   {
     OMPL_WARN("%s requires a state space with symmetric distance and symmetric interpolation.", getName().c_str());
@@ -252,10 +251,8 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
     if (base::GoalLazySamples* tmp_gls_initial = dynamic_cast<base::GoalLazySamples*>(goal_))
     {
       while (!tmp_gls_initial->hasStates())
-      {
-        OMPL_INFORM("Waiting for goal states to be sampled");
+        // Wait for goal states to be sampled
         continue;
-      }
       // Extract State from GoalStates object
       tmp_gls_initial->sampleGoal(gstate_initial);
       // stop GoalLazySamples sampling thread
@@ -339,6 +336,19 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
         // If we have a new goal, then change our planner goal state
         if (new_goal_vec_)
         {
+          // TODO: when we get a new goal, we should first check to see
+          // if the shortest path between the current root and the new
+          // goal state is a viable path, can do this by interpolating,
+          // checking collision between the root and the interpolated
+          // point and continuing in this fashion until we get to the
+          // goal state. Should be a pretty quick process and guaruntee
+          // that we always get the best path if possible
+          // QUICKER would be to collision check between the goal state
+          // and the current root and then if that is clear add nodes
+          // maxDistance_ interpolated between the goal state and the
+          // current root node until the last added node is less than
+          // maxDistance_ away from the goal node
+          /* si_->getStateSpace()->interpolate(nmotion->state, rstate_, maxDistance_ / d, xstate_); */
           OMPL_WARN("New goal state detected changing Planner goal and removing old solutions");
           base::State *gstate = si_->allocState();
           int i = 0;
@@ -498,10 +508,13 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
 
 void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
 {
+  unsigned int iter = 0;
+  unsigned int added_motion_count = 0;
   expand_tree_start_time_ = ros::Time::now();
   // want a do while loop since we want to expand the tree once if
   // time_to_expand = 0.0 seconds (which it does by default
   do {
+    iter++;
     // sample random state (with goal biasing)
     // Goal samples are only sampled until maxSampleCount() goals are in the tree, to prohibit duplicate goal
     // states.
@@ -663,6 +676,7 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
       else
       {
         // add motion to the tree
+        added_motion_count++;
         nn_->add(motion);
         motion->parent->children.push_back(motion);
       }
@@ -799,8 +813,13 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
       }
     }
   }
-  while (ros::Time::now() - expand_tree_start_time_ > time_to_expand);
+  while (ros::Time::now() - expand_tree_start_time_ < time_to_expand);
   // TODO: add some logging for number of expansion iterations that occured...
+  if (time_to_expand != ros::Duration(0.0))
+  {
+    OMPL_INFORM("Expand tree completed '%d' iterations", iter);
+    OMPL_INFORM("Expand tree added '%d' motions", added_motion_count);
+  }
 }
 
 void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
@@ -833,30 +852,38 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
 
   root_rewire_start_time_ = ros::Time::now();
   int iterations = 0;
+  std::size_t total_unique_count = 0;
   int toggle = 0;
 
   while (!rootRewireQueue.empty())
   {
     // if time_to_rewire is 0.0 seconds (default), then rewire until
     // queue is empty
-    // TODO: test what happens to cost outcome if I allow rewiring to complete fully
-    if (time_to_rewire != ros::Duration(0.0) && ros::Time::now() - root_rewire_start_time_ > time_to_rewire)
+    if (time_to_rewire != ros::Duration(0.0) && (ros::Time::now() - root_rewire_start_time_ > time_to_rewire))
+    {
+      OMPL_WARN("Time to rewire up, breaking out of rewireRoot");
       break;
+    }
     iterations++;
     rr_motion_ = rootRewireQueue.front();
     rootRewireQueue.pop_front();
     getNeighbors(rr_motion_, rr_nbh_);
 
-    int unique_count = 0;
+    int iteration_unique_count = 0;
     for (std::size_t k=0; k<rr_nbh_.size(); k++)
     {
       if (!rootRewireSet.count(rr_nbh_[k]))
-        unique_count++;
+      {
+        iteration_unique_count++;
+        total_unique_count++;
+      }
     }
-    if (unique_count > 0)
+    if (iteration_unique_count > 0)
     {
-      OMPL_INFORM("iteration '%d' gathered '%d' UNIQUE motions", iterations, unique_count);
-      OMPL_INFORM("Size of tree: '%d'", rr_nbh_.size());
+      OMPL_INFORM("iteration '%d' unique_count: '%d'", iterations, iteration_unique_count);
+      OMPL_INFORM("total_unique_count: '%d'. Size of tree: '%d'", total_unique_count, rr_nbh_.size());
+      if (total_unique_count == (rr_nbh_.size() - 1))
+        OMPL_WARN("Entire tree included in rootRewireQueue_");
     }
 
     for (std::size_t i = 0; i < rr_nbh_.size(); ++i)
