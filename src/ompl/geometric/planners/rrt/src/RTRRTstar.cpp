@@ -96,6 +96,8 @@ ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
     Planner::declareParam<bool>("focus_search", this, &RTRRTstar::setFocusSearch, &RTRRTstar::getFocusSearch, "0,1");
     Planner::declareParam<unsigned int>("number_sampling_attempts", this, &RTRRTstar::setNumSamplingAttempts,
                                         &RTRRTstar::getNumSamplingAttempts, "10:10:100000");
+    Planner::declareParam<bool>("check_shortest_path", this, &RTRRTstar::setCheckShortestPath,
+                                &RTRRTstar::getCheckShortestPath, "0,1");
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
@@ -326,6 +328,18 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
     ros::Time start_solution_loop = ros::Time::now();
     int motion_addition_count = 0;
 
+    // Add shortest path to tree if it is clear and
+    // useCheckShortestPath_ is set to true
+    if (useCheckShortestPath_)
+    {
+      auto *initial_goal_state = dynamic_cast<base::GoalState *>(goal_);
+      if (si_->checkMotion(current_root_->state, initial_goal_state->getState()))
+      {
+        OMPL_WARN("Shortest path between root and goal clear, adding motions along shortest path");
+        setShortestPath(initial_goal_state->getState());
+      }
+    }
+
     /* while (ptc == false) */
     while (goal_acheived == false)
     {
@@ -336,19 +350,6 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
         // If we have a new goal, then change our planner goal state
         if (new_goal_vec_)
         {
-          // TODO: when we get a new goal, we should first check to see
-          // if the shortest path between the current root and the new
-          // goal state is a viable path, can do this by interpolating,
-          // checking collision between the root and the interpolated
-          // point and continuing in this fashion until we get to the
-          // goal state. Should be a pretty quick process and guaruntee
-          // that we always get the best path if possible
-          // QUICKER would be to collision check between the goal state
-          // and the current root and then if that is clear add nodes
-          // maxDistance_ interpolated between the goal state and the
-          // current root node until the last added node is less than
-          // maxDistance_ away from the goal node
-          /* si_->getStateSpace()->interpolate(nmotion->state, rstate_, maxDistance_ / d, xstate_); */
           OMPL_WARN("New goal state detected changing Planner goal and removing old solutions");
           base::State *gstate = si_->allocState();
           int i = 0;
@@ -376,6 +377,18 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
           bestGoalMotion_ = nullptr;
           delete new_goal_vec_;
           new_goal_vec_ = nullptr;
+
+          auto *goal = dynamic_cast<base::GoalState *>(goal_);
+          // Add shortest path to tree if it is clear and
+          // useCheckShortestPath_ is set to true
+          if (useCheckShortestPath_)
+          {
+            if (si_->checkMotion(current_root_->state, goal->getState()))
+            {
+              OMPL_WARN("Shortest path between root and goal clear, adding motions along shortest path");
+              setShortestPath(goal->getState());
+            }
+          }
         }
 
         // If we have a path to goal, and the scene changed, then check
@@ -504,6 +517,30 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
 
     // We've added a solution if newSolution == true, and it is an approximate solution if bestGoalMotion_ == false
     return {newSolution != nullptr, bestGoalMotion_ == nullptr};
+}
+
+void ompl::geometric::RTRRTstar::setShortestPath(base::State *goal_state)
+{
+  Motion *new_motion;
+  base::State *new_state;
+  Motion *prev_motion = current_root_;
+  double d = si_->distance(prev_motion->state, goal_state);
+  do {
+    new_motion = new Motion(si_);
+    new_state = si_->allocState();
+    if (d > maxDistance_)
+      si_->getStateSpace()->interpolate(current_root_->state, goal_state, maxDistance_ / d, new_state);
+    else
+      new_state = goal_state;
+    si_->copyState(new_motion->state, new_state);
+    new_motion->parent = prev_motion;
+    new_motion->incCost = opt_->motionCost(prev_motion->state, new_state);
+    new_motion->cost = opt_->combineCosts(prev_motion->cost, new_motion->incCost);
+    nn_->add(new_motion);
+    d = si_->distance(new_motion->state, goal_state);
+    prev_motion = new_motion;
+  } while (d > maxDistance_);
+  bestGoalMotion_ = new_motion;
 }
 
 void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)

@@ -274,6 +274,18 @@ namespace ompl
                 return useOrderedSampling_;
             }
 
+            /** \brief Controls whether the shortest path to the goal is checked when the goal state changes */
+            void setCheckShortestPath(bool checkShortestPath)
+            {
+                useCheckShortestPath_ = checkShortestPath;
+            }
+
+            /** \brief Get the state of check shortest path. */
+            bool getCheckShortestPath() const
+            {
+                return useCheckShortestPath_;
+            }
+
             /** \brief Set the batch size used for sample ordering*/
             void setBatchSize(unsigned int batchSize)
             {
@@ -509,6 +521,9 @@ namespace ompl
             /** \brief Option to create batches of samples and order them. */
             bool useOrderedSampling_{false};
 
+            /** \brief Option to check if shortest path is clear and use it if it is. */
+            bool useCheckShortestPath_{false};
+
             /** \brief The size of the batches. */
             unsigned int batchSize_{1u};
 
@@ -571,6 +586,7 @@ namespace ompl
             void printStateValues(const base::State *state);
             void newGoalCallback(const std_msgs::Float64MultiArray new_goal_msg);
             void sceneChangedCallback(const moveit_msgs::PlanningScene planning_scene_msg);
+            void setShortestPath(base::State *state);
             bool scene_changed_;
             int goal_num_;
             int state_num_;
