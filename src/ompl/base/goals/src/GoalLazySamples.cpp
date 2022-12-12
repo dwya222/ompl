@@ -61,7 +61,6 @@ ompl::base::GoalLazySamples::~GoalLazySamples()
 
 void ompl::base::GoalLazySamples::startSampling()
 {
-  OMPL_INFORM("DWY in startSampling");
     std::lock_guard<std::mutex> slock(lock_);
     if (samplingThread_ == nullptr)
     {
@@ -73,7 +72,6 @@ void ompl::base::GoalLazySamples::startSampling()
 
 void ompl::base::GoalLazySamples::stopSampling()
 {
-  OMPL_INFORM("DWY: in stopSampling");
     /* Set termination flag */
     {
         std::lock_guard<std::mutex> slock(lock_);
@@ -95,7 +93,6 @@ void ompl::base::GoalLazySamples::stopSampling()
 
 void ompl::base::GoalLazySamples::goalSamplingThread()
 {
-  OMPL_INFORM("DWY in goalSamplingThread");
     {
         /* Wait for startSampling() to finish assignment
          * samplingThread_ */
@@ -105,17 +102,14 @@ void ompl::base::GoalLazySamples::goalSamplingThread()
     if (!si_->isSetup())  // this looks racy
     {
         OMPL_DEBUG("Waiting for space information to be set up before the sampling thread can begin computation...");
-        OMPL_INFORM("DWY: Waiting for space information to be set up before the sampling thread can begin computation...");
         // wait for everything to be set up before performing computation
         while (!terminateSamplingThread_ && !si_->isSetup())
             std::this_thread::sleep_for(time::seconds(0.01));
     }
-    OMPL_INFORM("DWY: made it through isSetup");
     unsigned int prevsa = samplingAttempts_;
     if (isSampling() && samplerFunc_)
     {
         OMPL_DEBUG("Beginning sampling thread computation");
-        OMPL_INFORM("DWY: Beginning sampling thread computation");
         ScopedState<> s(si_);
         while (isSampling() && samplerFunc_(this, s.get()))
         {
