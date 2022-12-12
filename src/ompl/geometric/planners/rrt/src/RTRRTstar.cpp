@@ -326,7 +326,6 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
     moveit_msgs::ExecuteTrajectoryGoal trajectory_goal_msg;
     rr_time_allowed_ = ros::Duration(0.5);
     ros::Time start_solution_loop = ros::Time::now();
-    int motion_addition_count = 0;
 
     // Add shortest path to tree if it is clear and
     // useCheckShortestPath_ is set to true
@@ -545,6 +544,8 @@ void ompl::geometric::RTRRTstar::setShortestPath(base::State *goal_state)
 
 void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
 {
+  if (time_to_expand != ros::Duration(0.0))
+    OMPL_INFORM("Expanding tree for '%f' seconds", time_to_expand.toSec());
   unsigned int iter = 0;
   unsigned int added_motion_count = 0;
   expand_tree_start_time_ = ros::Time::now();
@@ -769,7 +770,7 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
       {
         motion->inGoal = true;
         goalMotions_.push_back(motion);
-        OMPL_INFORM("DWY: adding to goalMotions_. New goalMotions_ size: '%d'", goalMotions_.size());
+        OMPL_INFORM("Adding to goalMotions_. New goalMotions_ size: '%d'", goalMotions_.size());
         checkForSolution = true;
       }
 
@@ -853,10 +854,7 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
   while (ros::Time::now() - expand_tree_start_time_ < time_to_expand);
   // TODO: add some logging for number of expansion iterations that occured...
   if (time_to_expand != ros::Duration(0.0))
-  {
-    OMPL_INFORM("Expand tree completed '%d' iterations", iter);
-    OMPL_INFORM("Expand tree added '%d' motions", added_motion_count);
-  }
+    OMPL_INFORM("Expand tree added '%d' motions in '%d' iterations", added_motion_count, iter);
 }
 
 void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
@@ -881,6 +879,10 @@ void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
 
 void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
 {
+  if (time_to_rewire != ros::Duration(0.0))
+    OMPL_INFORM("Rewiring from root for '%f' seconds", time_to_rewire.toSec());
+  else
+    OMPL_INFORM("Rewiring from root until all unique motions rewired");
   std::deque<Motion *> rootRewireQueue;
   std::set<Motion *> rootRewireSet;
 
@@ -889,8 +891,6 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
 
   root_rewire_start_time_ = ros::Time::now();
   int iterations = 0;
-  std::size_t total_unique_count = 0;
-  int toggle = 0;
 
   while (!rootRewireQueue.empty())
   {
@@ -898,30 +898,13 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
     // queue is empty
     if (time_to_rewire != ros::Duration(0.0) && (ros::Time::now() - root_rewire_start_time_ > time_to_rewire))
     {
-      OMPL_WARN("Time to rewire up, breaking out of rewireRoot");
+      OMPL_INFORM("Time to rewire up, breaking out of rewireRoot");
       break;
     }
     iterations++;
     rr_motion_ = rootRewireQueue.front();
     rootRewireQueue.pop_front();
     getNeighbors(rr_motion_, rr_nbh_);
-
-    int iteration_unique_count = 0;
-    for (std::size_t k=0; k<rr_nbh_.size(); k++)
-    {
-      if (!rootRewireSet.count(rr_nbh_[k]))
-      {
-        iteration_unique_count++;
-        total_unique_count++;
-      }
-    }
-    if (iteration_unique_count > 0)
-    {
-      OMPL_INFORM("iteration '%d' unique_count: '%d'", iterations, iteration_unique_count);
-      OMPL_INFORM("total_unique_count: '%d'. Size of tree: '%d'", total_unique_count, rr_nbh_.size());
-      if (total_unique_count == (rr_nbh_.size() - 1))
-        OMPL_WARN("Entire tree included in rootRewireQueue_");
-    }
 
     for (std::size_t i = 0; i < rr_nbh_.size(); ++i)
     {
@@ -945,32 +928,14 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
 
             // Update the costs_ of the node's children
             updateChildCosts(rr_nbh_[i]);
-
-            // TODO: should I set checkForSolution = true here?
           }
         }
       }
       if (rootRewireSet.insert(rr_nbh_[i]).second == true)
-      {
-        if (toggle != 1)
-        {
-          OMPL_INFORM("SWITCH: INSERTING INTO ROOT REWIRE SET. iteration: '%d'", iterations);
-          toggle = 1;
-        }
         rootRewireQueue.push_back(rr_nbh_[i]);
-      }
-      else // rootRewireSet.insert(rr_nbh_[i]).second = false
-      {
-        if (toggle != 2)
-        {
-          OMPL_INFORM("SWITCH: NOT INSERTING INTO ROOT REWIRE SET. iteration: '%d'", iterations);
-          toggle = 2;
-        }
-      }
     }
   }
-  OMPL_INFORM("Root rewire completed '%d' iterations", iterations);
-  OMPL_INFORM("Root rewire queue size: '%d'", rootRewireQueue.size());
+  OMPL_INFORM("Motions rewired / Motions in tree: %d / %d", iterations, nn_->size());
 }
 
 inline bool ompl::geometric::RTRRTstar::fileExists(const std::string& name)
@@ -1093,15 +1058,14 @@ void ompl::geometric::RTRRTstar::getNeighbors(Motion *motion, std::vector<Motion
   {
     //- k-nearest RRT*
     unsigned int k = std::ceil(k_rrt_ * log(cardDbl));
-    /* OMPL_INFORM("k = '%d', k_rrt_ = '%f', cardDbl = '%f', log(cardDbl) = '%f'", k, k_rrt_, cardDbl, log(cardDbl)); */
     nn_->nearestK(motion, k, nbh_);
   }
   else
   {
-    double r = std::min(
-      maxDistance_, r_rrt_ * std::pow(log(cardDbl) / cardDbl, 1 / static_cast<double>(si_->getStateDimension())));
-    /* nn_->nearestR(motion, r, nbh_); */
-    nn_->nearestR(motion, maxDistance_, nbh_);
+    /* double r = std::min(maxDistance_, r_rrt_ * std::pow(log(cardDbl) / cardDbl, */
+    /*                                                     1 / static_cast<double>(si_->getStateDimension()))); */
+    double r = maxDistance_;
+    nn_->nearestR(motion, r, nbh_);
   }
 }
 
