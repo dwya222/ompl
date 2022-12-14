@@ -98,6 +98,8 @@ ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
                                         &RTRRTstar::getNumSamplingAttempts, "10:10:100000");
     Planner::declareParam<bool>("check_shortest_path", this, &RTRRTstar::setCheckShortestPath,
                                 &RTRRTstar::getCheckShortestPath, "0,1");
+    Planner::declareParam<double>("sampling_density", this, &RTRRTstar::setSamplingDensity,
+                                  &RTRRTstar::getSamplingDensity, "0.:.01:10.");
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
@@ -554,8 +556,8 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
   do {
     iter++;
     // sample random state (with goal biasing)
-    // Goal samples are only sampled until maxSampleCount() goals are in the tree, to prohibit duplicate goal
-    // states.
+    // Goal samples are only sampled until maxSampleCount() goals are in
+    // the tree, to prohibit duplicate goal states.
     if (goal_s_ && goalMotions_.size() < goal_s_->maxSampleCount() && rng_.uniform01() < goalBias_ &&
         goal_s_->canSample())
     {
@@ -596,7 +598,7 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
       motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
 
       // Find nearby neighbors of the new motion
-      getNeighbors(motion, nbh_);
+      getNeighbors(motion, nbh_, maxDistance_);
 
       rewireTest_ += nbh_.size();
       ++statesGenerated_;
@@ -711,10 +713,13 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
           continue;
         }
       }
-      else
+      else if (samplingDensity_ == 0.0 || (nbh_.size() / maxDistance_ < samplingDensity_))
       {
-        // add motion to the tree
+        // add motion to the tree as long as we do not exceed the
+        // samplingDensity_ if we're considering it
+        // (if samplingDensity_ == 0.0 then we are not considering it)
         added_motion_count++;
+        double density = nbh_.size() / maxDistance_;
         nn_->add(motion);
         motion->parent->children.push_back(motion);
       }
@@ -815,11 +820,6 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
 
         if (updatedSolution)
         {
-          /* OMPL_INFORM("Updated solution: outputting bestGoalMotion_->state"); */
-          /* for (int i=0; i<8; i++) */
-          /* { */
-          /*   OMPL_INFORM("rstate[%d]: '%f'", i, bestGoalMotion_->state->as<base::RealVectorStateSpace::StateType>()->values[i]); */
-          /* } */
           if (useTreePruning_)
           {
             pruneTree(bestCost_);
@@ -850,9 +850,7 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
         approxDist_ = distanceFromGoal;
       }
     }
-  }
-  while (ros::Time::now() - expand_tree_start_time_ < time_to_expand);
-  // TODO: add some logging for number of expansion iterations that occured...
+  } while (ros::Time::now() - expand_tree_start_time_ < time_to_expand);
   if (time_to_expand != ros::Duration(0.0))
     OMPL_INFORM("Expand tree added '%d' motions in '%d' iterations", added_motion_count, iter);
 }
@@ -904,7 +902,7 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
     iterations++;
     rr_motion_ = rootRewireQueue.front();
     rootRewireQueue.pop_front();
-    getNeighbors(rr_motion_, rr_nbh_);
+    getNeighbors(rr_motion_, rr_nbh_, maxDistance_);
 
     for (std::size_t i = 0; i < rr_nbh_.size(); ++i)
     {
@@ -1051,7 +1049,7 @@ void ompl::geometric::RTRRTstar::printStateValues(const ompl::base::State *state
   }
 }
 
-void ompl::geometric::RTRRTstar::getNeighbors(Motion *motion, std::vector<Motion *> &nbh_) const
+void ompl::geometric::RTRRTstar::getNeighbors(Motion *motion, std::vector<Motion *> &nbh_, double r) const
 {
   auto cardDbl = static_cast<double>(nn_->size() + 1u);
   if (useKNearest_)
@@ -1062,9 +1060,12 @@ void ompl::geometric::RTRRTstar::getNeighbors(Motion *motion, std::vector<Motion
   }
   else
   {
-    /* double r = std::min(maxDistance_, r_rrt_ * std::pow(log(cardDbl) / cardDbl, */
-    /*                                                     1 / static_cast<double>(si_->getStateDimension()))); */
-    double r = maxDistance_;
+    // If r == 0.0 (default) then use r computed based on size of tree
+    if (r == 0.0)
+    {
+      r = std::min(maxDistance_, r_rrt_ * std::pow(log(cardDbl) / cardDbl,
+                                                   1 / static_cast<double>(si_->getStateDimension())));
+    }
     nn_->nearestR(motion, r, nbh_);
   }
 }

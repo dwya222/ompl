@@ -286,6 +286,18 @@ namespace ompl
                 return useCheckShortestPath_;
             }
 
+            /** \brief Controls density (# motions / radius) of sampling allowed. */
+            void setSamplingDensity(double samplingDensity)
+            {
+                samplingDensity_ = samplingDensity;
+            }
+
+            /** \brief Get the sampling density. */
+            double getSamplingDensity() const
+            {
+                return samplingDensity_;
+            }
+
             /** \brief Set the batch size used for sample ordering*/
             void setBatchSize(unsigned int batchSize)
             {
@@ -420,7 +432,7 @@ namespace ompl
             }
 
             /** \brief Gets the neighbours of a given motion, using either k-nearest of radius as appropriate. */
-            void getNeighbors(Motion *motion, std::vector<Motion *> &nbh) const;
+            void getNeighbors(Motion *motion, std::vector<Motion *> &nbh, double r=0.0) const;
 
             /** \brief Removes the given motion from the parent's child list */
             void removeFromParent(Motion *m);
@@ -523,6 +535,9 @@ namespace ompl
 
             /** \brief Option to check if shortest path is clear and use it if it is. */
             bool useCheckShortestPath_{false};
+
+            /** \brief Option to only add nodes when sampling density is not exceeded. Not considered if equal to 0.*/
+            double samplingDensity_{0.};
 
             /** \brief The size of the batches. */
             unsigned int batchSize_{1u};
