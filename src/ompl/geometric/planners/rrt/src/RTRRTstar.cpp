@@ -600,6 +600,13 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
       // Find nearby neighbors of the new motion
       getNeighbors(motion, nbh_, maxDistance_);
 
+      // Density-based sample rejection: skip this iteration if density exceeded
+      double distanceFromGoal;
+      if (samplingDensity_ == 0.0 || goal_->isSatisfied(dstate, &distanceFromGoal))
+        { /* do not check for sampling density */ }
+      else if (nbh_.size() / maxDistance_ > samplingDensity_)
+        continue;
+
       rewireTest_ += nbh_.size();
       ++statesGenerated_;
 
@@ -640,7 +647,6 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
         // original, unsorted indices
         for (std::size_t i = 0; i < nbh_.size(); ++i)
           sortedCostIndices_[i] = i;
-        /* std::sort(sortedCostIndices_.begin(), sortedCostIndices_.begin() + nbh_.size(), compareFn); */
         std::sort(sortedCostIndices_.begin(), sortedCostIndices_.begin() + nbh_.size(), *compareFn_ptr_);
 
         // collision check until a valid motion is found
@@ -713,13 +719,9 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
           continue;
         }
       }
-      else if (samplingDensity_ == 0.0 || (nbh_.size() / maxDistance_ < samplingDensity_))
+      else
       {
-        // add motion to the tree as long as we do not exceed the
-        // samplingDensity_ if we're considering it
-        // (if samplingDensity_ == 0.0 then we are not considering it)
         added_motion_count++;
-        double density = nbh_.size() / maxDistance_;
         nn_->add(motion);
         motion->parent->children.push_back(motion);
       }
@@ -770,7 +772,6 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
       }
 
       // Add the new motion to the goalMotion_ list, if it satisfies the goal
-      double distanceFromGoal;
       if (goal_->isSatisfied(motion->state, &distanceFromGoal))
       {
         motion->inGoal = true;
