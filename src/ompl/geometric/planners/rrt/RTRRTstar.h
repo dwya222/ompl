@@ -286,16 +286,28 @@ namespace ompl
                 return useCheckShortestPath_;
             }
 
-            /** \brief Controls density (# motions / radius) of sampling allowed. */
-            void setSamplingDensity(double samplingDensity)
+            /** \brief Controls maximum number of near neighbors allowed. */
+            void setMaxNeighbors(unsigned int maxNeighbors)
             {
-                samplingDensity_ = samplingDensity;
+                maxNeighbors_ = maxNeighbors;
             }
 
-            /** \brief Get the sampling density. */
-            double getSamplingDensity() const
+            /** \brief Get the maximum number of near neighbors. */
+            unsigned int getMaxNeighbors() const
             {
-                return samplingDensity_;
+                return maxNeighbors_;
+            }
+
+            /** \brief Controls how close the nearest neighbor can be. */
+            void setNearestNeighborDist(double nearestNeighborDist)
+            {
+                nearestNeighborDist_ = nearestNeighborDist;
+            }
+
+            /** \brief Get the nearest neighbor distance. */
+            unsigned int getNearestNeighborDist() const
+            {
+                return nearestNeighborDist_;
             }
 
             /** \brief Set the batch size used for sample ordering*/
@@ -536,8 +548,11 @@ namespace ompl
             /** \brief Option to check if shortest path is clear and use it if it is. */
             bool useCheckShortestPath_{false};
 
-            /** \brief Option to only add nodes when sampling density is not exceeded. Not considered if equal to 0.*/
-            double samplingDensity_{0.};
+            /** \brief Option to only add nodes when nearest neighbors is less than max. Disabled if equal to 0.*/
+            unsigned int maxNeighbors_{0};
+
+            /** \brief Option to only add nodes when nearest neighbor farther than dist. Disabled if equal to 0.*/
+            double nearestNeighborDist_{0.};
 
             /** \brief The size of the batches. */
             unsigned int batchSize_{1u};

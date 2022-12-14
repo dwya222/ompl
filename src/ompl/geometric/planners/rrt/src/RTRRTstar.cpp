@@ -98,8 +98,10 @@ ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
                                         &RTRRTstar::getNumSamplingAttempts, "10:10:100000");
     Planner::declareParam<bool>("check_shortest_path", this, &RTRRTstar::setCheckShortestPath,
                                 &RTRRTstar::getCheckShortestPath, "0,1");
-    Planner::declareParam<double>("sampling_density", this, &RTRRTstar::setSamplingDensity,
-                                  &RTRRTstar::getSamplingDensity, "0.:.01:10.");
+    Planner::declareParam<unsigned int>("max_neighbors", this, &RTRRTstar::setMaxNeighbors, &RTRRTstar::getMaxNeighbors,
+                                        "0:1:1000");
+    Planner::declareParam<double>("nearest_neighbor", this, &RTRRTstar::setNearestNeighborDist,
+                                  &RTRRTstar::getNearestNeighborDist, "0.:.01:10.");
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
@@ -602,10 +604,17 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
 
       // Density-based sample rejection: skip this iteration if density exceeded
       double distanceFromGoal;
-      if (samplingDensity_ == 0.0 || goal_->isSatisfied(dstate, &distanceFromGoal))
+      if (maxNeighbors_ == 0 || goal_->isSatisfied(dstate, &distanceFromGoal))
         { /* do not check for sampling density */ }
-      else if (nbh_.size() / maxDistance_ > samplingDensity_)
+      else if ((nbh_.size() > maxNeighbors_) || motion->incCost.value() < nearestNeighborDist_)
+      {
+        if (nbh_.size() > maxNeighbors_)
+          OMPL_WARN("Max neighbor rejection, nbh.size(): '%d'", nbh_.size());
+        if (motion->incCost.value() < nearestNeighborDist_)
+          OMPL_WARN("Nearest Neighbor rejection, nn distance: '%f'", motion->incCost);
         continue;
+      }
+        /* continue; */
 
       rewireTest_ += nbh_.size();
       ++statesGenerated_;
