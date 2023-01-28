@@ -34,7 +34,7 @@ set(OMPL_DEMO_INSTALL_DIR "${CMAKE_INSTALL_DATAROOTDIR}/ompl/demos"
     CACHE STRING "Relative path to directory where demos will be installed")
 
 include_directories("${OMPL_INCLUDE_DIRS}")
-find_package(catkin REQUIRED COMPONENTS roscpp roslib actionlib control_msgs moveit_msgs std_msgs)
+find_package(catkin REQUIRED COMPONENTS roscpp roslib actionlib control_msgs moveit_msgs std_msgs trajectory_msgs robo_demo_msgs)
 find_package(jsoncpp REQUIRED)
 include_directories(${catkin_INCLUDE_DIRS})
 

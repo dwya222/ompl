@@ -48,17 +48,17 @@
 #include <deque>
 #include <utility>
 #include <list>
-#include <jsoncpp/json/json.h>
+#include <memory>
+#include <mutex>
 
 #include <ros/ros.h>
-#include <control_msgs/FollowJointTrajectoryAction.h>
-#include <moveit_msgs/ExecuteTrajectoryAction.h>
-#include <moveit_msgs/PlanningScene.h>
 #include <actionlib/client/simple_action_client.h>
 #include <std_msgs/Float64MultiArray.h>
-
-/* typedef actionlib::SimpleActionClient<control_msgs::FollowJointTrajectoryAction> TrajectoryClient; */
-typedef actionlib::SimpleActionClient<moveit_msgs::ExecuteTrajectoryAction> TrajectoryClient;
+#include <std_msgs/Bool.h>
+#include <trajectory_msgs/JointTrajectory.h>
+#include <trajectory_msgs/JointTrajectoryPoint.h>
+#include <robo_demo_msgs/JointTrajectoryPointStamped.h>
+#include <robo_demo_msgs/BoolStamped.h>
 
 namespace ompl
 {
@@ -366,7 +366,7 @@ namespace ompl
                 return numSampleAttempts_;
             }
 
-            unsigned int numIterations() const
+            unsigned long long numIterations() const
             {
                 return iterations_;
             }
@@ -571,7 +571,7 @@ namespace ompl
             double prunedMeasure_{0.};
 
             /** \brief Number of iterations the algorithm performed */
-            unsigned int iterations_{0u};
+            unsigned long long iterations_{0u};
 
             ///////////////////////////////////////
             // Planner progress property functions
@@ -604,42 +604,60 @@ namespace ompl
             std::vector<int> valid_;
             ros::Time expand_tree_start_time_;
             void expandTree(ros::Duration time_to_expand=ros::Duration(0.0));
+            void checkForSolution();
 
             // Variables for real-time/ROS implementation
-            Motion* getNextMotion(Motion *last_motion);
+            Motion* getNextMotion();
             bool fileExists(const std::string& name);
-            void storeStepInfo(Motion *goal, Motion *next);
-            void sendTrajectoryGoalFromMotion(Motion *next_motion);
             void changeRoot(Motion *new_root);
-            void rewireRoot(ros::Duration time_to_expand=ros::Duration(0.0));
+            void rewireRoot(ros::Duration time_to_rewire=ros::Duration(0.0));
             void evalRoot(Motion *goal);
             void printStateValues(const base::State *state);
-            void newGoalCallback(const std_msgs::Float64MultiArray new_goal_msg);
-            void sceneChangedCallback(const moveit_msgs::PlanningScene planning_scene_msg);
             void setShortestPath(base::State *state);
-            bool scene_changed_;
-            int goal_num_;
-            int state_num_;
-            Json::Value path_info_json_;
-            std::vector<double>* new_goal_vec_;
+            void newGoalCallbackQueue(const std_msgs::Float64MultiArray::ConstPtr& new_goal_msg);
+            void edgeClearCallbackQueue(const robo_demo_msgs::BoolStamped::ConstPtr& edge_clear_msg);
+            void executingToStateCallbackQueue(
+                const robo_demo_msgs::JointTrajectoryPointStamped::ConstPtr& next_state_msg);
+            std_msgs::Float64MultiArray::ConstPtr new_goal_msg_;
+            robo_demo_msgs::BoolStamped::ConstPtr edge_clear_msg_;
+            robo_demo_msgs::JointTrajectoryPointStamped::ConstPtr next_state_msg_;
+            void handleCallbacks();
+            void newGoalCallbackHandle();
+            void edgeClearCallbackHandle();
+            void executingToStateCallbackHandle();
+            void publishCurrentPath();
+            std::mutex mutex_;
+            std::mutex new_goal_mutex_;
+            std::mutex edge_clear_mutex_;
+            std::mutex next_state_mutex_;
+            int state_dimension_;
+            double prev_goal_cost_ {std::numeric_limits<double>::quiet_NaN()};
             std::vector<Motion *> rr_nbh_;
             std::vector<base::Cost> rr_costs_;
             std::vector<base::Cost> rr_inc_costs_;
             std::vector<std::size_t> rr_sorted_cost_indices_;
             std::vector<int> rr_valid_;
             ros::Time root_rewire_start_time_;
-            ros::Duration rr_time_allowed_;
             Motion *rr_motion_;
             Motion *current_root_;
-            Motion *prev_goal_ {nullptr};
             ros::NodeHandle nh_;
             ros::Subscriber new_goal_sub_;
-            ros::Subscriber scene_changed_sub_;
-            TrajectoryClient* trajectory_client_;
-            // Real panda controller
-            /* control_msgs::FollowJointTrajectoryGoal joint_trajectory_goal_; */
-            // Sim controller
-            /* moveit_msgs::ExecuteTrajectoryGoal joint_trajectory_goal_; */
+            ros::Subscriber edge_clear_sub_;
+            ros::Subscriber executing_to_state_sub_;
+            ros::Publisher current_path_pub_;
+            double time_to_maintain_;
+            double maintain_time_pct_ {0.95};
+            double expand_time_pct_ {0.3};
+            double rewire_time_pct_ {0.7};
+
+            enum PlannerState
+            {
+              SEARCH_FOR_SOLUTION,
+              WAIT_FOR_UPDATES,
+              MAINTAIN_TREE,
+              GOAL_ACHIEVED
+            };
+            PlannerState planner_state_ {SEARCH_FOR_SOLUTION};
         };
     }
 }
