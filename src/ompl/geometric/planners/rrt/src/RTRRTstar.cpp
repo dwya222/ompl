@@ -301,38 +301,55 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
     {
         iterations_++;
 
-        /* // Check if we need to run callbacks */
-        handleCallbacks();
-
         switch (planner_state_)
         {
           case SEARCH_FOR_SOLUTION:
-            expandTree();
+            handleCallbacks(true/* new_goal_only */);
+            expandTree(); // sets updated_solution_ = true if path to goal found/updated
+            if (updated_solution_) {
+              publishCurrentPath();
+              planner_state_ = WAIT_FOR_UPDATES;
+              updated_solution_ = false;
+            }
             break;
           case WAIT_FOR_UPDATES:
-            continue;
-          case MAINTAIN_TREE:
-            expandTree(ros::Duration(time_to_maintain_ * expand_time_pct_));
-            rewireRoot(ros::Duration(time_to_maintain_ * rewire_time_pct_));
-            planner_state_ = WAIT_FOR_UPDATES;
-            OMPL_WARN("Switching Planner State to WAIT_FOR_UPDATES. it: '%d'", iterations_);
+            handleCallbacks();
+            if (heading_to_goal_) {
+              planner_state_ = GOAL_ACHIEVED;
+              break;
+            }
+            if (control_executing_) {
+              planner_state_ = MAINTAIN_TREE;
+              control_executing_ = false;
+              break;
+            }
+            if (new_goal_) {
+              planner_state_ = SEARCH_FOR_SOLUTION;
+              new_goal_ = false;
+            }
             break;
+          case MAINTAIN_TREE:
+            {
+              double rewire_root_secs = (end_maintain_time_secs_ - ros::Time::now().toSec()) * rewire_time_pct_;
+              rewireRoot(ros::Duration(rewire_root_secs)); // sets updated_solution_ = true if path to goal updated
+              handleCallbacks(true/* new_goal_only */);
+              if (new_goal_) {
+                planner_state_ = SEARCH_FOR_SOLUTION;
+                updated_solution_ = false;
+                new_goal_ = false;
+                break;
+              }
+              double secs_left_to_expand = end_maintain_time_secs_ - ros::Time::now().toSec();
+              expandTree(ros::Duration(secs_left_to_expand)); // sets updated_solution_ = true if path to goal updated
+              if (updated_solution_) {
+                publishCurrentPath();
+                updated_solution_ = false;
+              }
+              planner_state_ = WAIT_FOR_UPDATES;
+              break;
+            }
           case GOAL_ACHIEVED:
-            continue;
-        }
-
-
-        if (bestGoalMotion_)
-        {
-          // TODO should have a flag that gets set in the goal check method when the goal motion changes
-          if (bestGoalMotion_->cost.value() != prev_goal_cost_)
-          {
-            // TODO this should be stored in the variable `bestCost_` but I can`t use that until the root-rewire
-            // updates the goal checks
-            OMPL_WARN("Best path to goal updated, publishing current path. it: '%d'", iterations_);
-            prev_goal_cost_ = bestGoalMotion_->cost.value();
-            publishCurrentPath();
-          }
+            break;
         }
     }
     OMPL_INFORM("GOAL_ACHIEVED");
@@ -409,12 +426,13 @@ void ompl::geometric::RTRRTstar::executingToStateCallbackQueue(
   next_state_msg_ = next_state_msg;
 }
 
-void ompl::geometric::RTRRTstar::handleCallbacks()
+void ompl::geometric::RTRRTstar::handleCallbacks(bool new_goal_only)
 {
   if (new_goal_msg_)
   {
     newGoalCallbackHandle();
     new_goal_msg_.reset();
+    if (new_goal_only) return;
   }
   if (edge_clear_msg_)
   {
@@ -432,6 +450,7 @@ void ompl::geometric::RTRRTstar::newGoalCallbackHandle()
 {
   std::lock_guard<std::mutex> lock(new_goal_mutex_);
   OMPL_WARN("New goal state detected. Changing Planner goal and removing old solutions");
+  new_goal_ = true;
   base::State *gstate = si_->allocState();
   for (unsigned int i = 0; i < new_goal_msg_->data.size(); i++)
     gstate->as<base::RealVectorStateSpace::StateType>()->values[i] = new_goal_msg_->data[i];
@@ -445,8 +464,6 @@ void ompl::geometric::RTRRTstar::newGoalCallbackHandle()
     motion->inGoal = false;
   goalMotions_.clear();
   bestGoalMotion_ = nullptr;
-  planner_state_ = SEARCH_FOR_SOLUTION;
-  OMPL_WARN("Switching Planner State to SEARCH_FOR_SOLUTION. it: '%d'", iterations_);
 
   // Add shortest path to tree if it is clear and
   // useCheckShortestPath_ is set to true
@@ -475,6 +492,7 @@ void ompl::geometric::RTRRTstar::executingToStateCallbackHandle()
 {
   std::lock_guard<std::mutex> lock(next_state_mutex_);
   OMPL_WARN("In executingToStateCallbackHandle");
+  control_executing_ = true;
   Motion *next_motion = getNextMotion();
   double *next_values = next_motion->state->as<base::RealVectorStateSpace::StateType>()->values;
   std::vector<double> next_state(next_values, next_values + state_dimension_);
@@ -490,11 +508,10 @@ void ompl::geometric::RTRRTstar::executingToStateCallbackHandle()
                next_state_msg_->trajectory_point.positions[5], next_state_msg_->trajectory_point.positions[6]);
     return;
   }
-  ros::Duration elapsed = ros::Time::now() - next_state_msg_->header.stamp;
-  // use maintain_time_pct_% of remaining control execution time to maintain tree and leave some time for communication
-  time_to_maintain_ = (next_state_msg_->trajectory_point.time_from_start - elapsed).toSec() * maintain_time_pct_;
-  planner_state_ = MAINTAIN_TREE;
-  OMPL_WARN("Switching Planner State to MAINTAIN_TREE. it: '%d'", iterations_);
+  ros::Duration end_control_dur = next_state_msg_->trajectory_point.time_from_start;
+  ros::Time control_start_time = next_state_msg_->header.stamp;
+  // use maintain_time_pct_% of remaining control execution time to maintain tree to leave some time for communication
+  end_maintain_time_secs_ = control_start_time.toSec() + (end_control_dur.toSec() * maintain_time_pct_);
   changeRoot(next_motion);
 }
 
@@ -517,7 +534,7 @@ void ompl::geometric::RTRRTstar::publishCurrentPath()
   std::reverse(path_msg.points.begin(), path_msg.points.end());
   path_msg.header.stamp = ros::Time::now();
   current_path_pub_.publish(path_msg);
-  planner_state_ = WAIT_FOR_UPDATES;
+  OMPL_WARN("Published current path. it: '%lu'", iterations_);
 }
 
 void ompl::geometric::RTRRTstar::setShortestPath(base::State *goal_state)
@@ -543,6 +560,7 @@ void ompl::geometric::RTRRTstar::setShortestPath(base::State *goal_state)
     prev_motion = new_motion;
   } while (d > maxDistance_);
   bestGoalMotion_ = new_motion;
+  updated_solution_ = true;
 }
 
 void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
@@ -557,10 +575,9 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
   do {
     iter++;
     // sample random state (with goal biasing)
-    // Goal samples are only sampled until maxSampleCount() goals are in
-    // the tree, to prohibit duplicate goal states.
-    if (goal_s_ && goalMotions_.size() < goal_s_->maxSampleCount() && rng_.uniform01() < goalBias_ &&
-        goal_s_->canSample())
+    // Goal samples are only sampled until a goal is in the tree, to
+    // prohibit duplicate goal states.
+    if (goal_s_ && !bestGoalMotion_ && rng_.uniform01() < goalBias_ && goal_s_->canSample())
     {
       goal_s_->sampleGoal(rstate_);
     }
@@ -782,6 +799,8 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
       // Add the new motion to the goalMotion_ list, if it satisfies the goal
       if (goal_->isSatisfied(motion->state, &distanceFromGoal))
       {
+        if (bestGoalMotion_)
+          OMPL_ERROR("Already have a bestGoalMotion_ but still found another goal");
         motion->inGoal = true;
         OMPL_INFORM("Adding to goalMotions_. Old goalMotions_ size: '%d'", goalMotions_.size());
         goalMotions_.push_back(motion);
@@ -801,21 +820,20 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
     }
   } while (ros::Time::now() - expand_tree_start_time_ < time_to_expand);
   if (time_to_expand != ros::Duration(0.0))
-    OMPL_INFORM("Expand tree added '%d' motions in '%d' iterations", added_motion_count, iter);
+    OMPL_INFORM("Expand tree added '%d' motions in '%lu' iterations", added_motion_count, iter);
 }
 
 void ompl::geometric::RTRRTstar::checkForSolution()
 {
-  bool updatedSolution = false;
   if (!bestGoalMotion_ && !goalMotions_.empty())
   {
     // We have found our first solution, store it as the best. We only add one
     // vertex at a time, so there can only be one goal vertex at this moment.
     bestGoalMotion_ = goalMotions_.front();
     bestCost_ = bestGoalMotion_->cost;
-    updatedSolution = true;
+    updated_solution_ = true;
 
-    OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %u iterations (%u "
+    OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %lu iterations (%u "
                 "vertices in the graph)",
                 getName().c_str(), bestCost_.value(), iterations_, nn_->size());
   }
@@ -830,7 +848,7 @@ void ompl::geometric::RTRRTstar::checkForSolution()
       {
         bestGoalMotion_ = goalMotion;
         bestCost_ = bestGoalMotion_->cost;
-        updatedSolution = true;
+        updated_solution_ = true;
         OMPL_INFORM("Found improved solution with cost '%.2f'", bestCost_.value());
 
         // Check if it satisfies the optimization objective, if it does, break the for loop
@@ -839,30 +857,6 @@ void ompl::geometric::RTRRTstar::checkForSolution()
           break;
         }
       }
-    }
-  }
-
-  if (updatedSolution)
-  {
-    if (useTreePruning_)
-    {
-      pruneTree(bestCost_);
-    }
-
-    if (*intermediateSolutionCallback_ptr_)
-    {
-      std::vector<const base::State *> spath;
-      Motion *intermediate_solution =
-          bestGoalMotion_->parent;  // Do not include goal state to simplify code.
-
-      // Push back until we find the start, but not the start itself
-      while (intermediate_solution->parent != nullptr)
-      {
-        spath.push_back(intermediate_solution->state);
-        intermediate_solution = intermediate_solution->parent;
-      }
-
-      (*intermediateSolutionCallback_ptr_)(this, spath, bestCost_);
     }
   }
 }
@@ -884,7 +878,8 @@ void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
   if (current_root_ == bestGoalMotion_)
   {
     planner_state_ = GOAL_ACHIEVED;
-    OMPL_WARN("Switching Planner state to GOAL_ACHIEVED. it: '%d'", iterations_);
+    heading_to_goal_ = true;
+    OMPL_WARN("Switching Planner state to GOAL_ACHIEVED. it: '%lu'", iterations_);
   }
   updateChildCosts(new_root);
 }
@@ -892,7 +887,7 @@ void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
 void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
 {
   if (time_to_rewire != ros::Duration(0.0))
-    OMPL_INFORM("Rewiring from root for '%f' seconds", time_to_rewire.toSec());
+    OMPL_INFORM("Rewiring from root for max '%f' seconds", time_to_rewire.toSec());
   else
     OMPL_INFORM("Rewiring from root until all unique motions rewired");
   std::deque<Motion *> rootRewireQueue;
@@ -902,7 +897,7 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
   rootRewireSet.insert(current_root_);
 
   root_rewire_start_time_ = ros::Time::now();
-  int iterations = 0;
+  unsigned int iterations = 0;
 
   while (!rootRewireQueue.empty())
   {
@@ -916,7 +911,7 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
     iterations++;
     rr_motion_ = rootRewireQueue.front();
     rootRewireQueue.pop_front();
-    getNeighbors(rr_motion_, rr_nbh_, maxDistance_);
+    getNeighbors(rr_motion_, rr_nbh_, (maxDistance_ + maxDistance_ * 0.01));
 
     for (std::size_t i = 0; i < rr_nbh_.size(); ++i)
     {
@@ -947,7 +942,10 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
         rootRewireQueue.push_back(rr_nbh_[i]);
     }
   }
-  OMPL_INFORM("Motions rewired / Motions in tree: %d / %d", iterations, nn_->size());
+  checkForSolution();
+  if (rootRewireQueue.empty())
+    OMPL_INFORM("Rewired until queue empty for '%f' seconds", (ros::Time::now() - root_rewire_start_time_).toSec());
+  OMPL_INFORM("Motions rewired / Motions in tree: %u / %u", iterations, nn_->size());
 }
 
 inline bool ompl::geometric::RTRRTstar::fileExists(const std::string& name)

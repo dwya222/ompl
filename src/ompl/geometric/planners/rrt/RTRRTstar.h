@@ -366,7 +366,7 @@ namespace ompl
                 return numSampleAttempts_;
             }
 
-            unsigned long long numIterations() const
+            unsigned long numIterations() const
             {
                 return iterations_;
             }
@@ -571,7 +571,7 @@ namespace ompl
             double prunedMeasure_{0.};
 
             /** \brief Number of iterations the algorithm performed */
-            unsigned long long iterations_{0u};
+            unsigned long iterations_{0u};
 
             ///////////////////////////////////////
             // Planner progress property functions
@@ -621,7 +621,7 @@ namespace ompl
             std_msgs::Float64MultiArray::ConstPtr new_goal_msg_;
             robo_demo_msgs::BoolStamped::ConstPtr edge_clear_msg_;
             robo_demo_msgs::JointTrajectoryPointStamped::ConstPtr next_state_msg_;
-            void handleCallbacks();
+            void handleCallbacks(bool new_goal_only=false);
             void newGoalCallbackHandle();
             void edgeClearCallbackHandle();
             void executingToStateCallbackHandle();
@@ -645,10 +645,14 @@ namespace ompl
             ros::Subscriber edge_clear_sub_;
             ros::Subscriber executing_to_state_sub_;
             ros::Publisher current_path_pub_;
+            double end_maintain_time_secs_;
             double time_to_maintain_;
             double maintain_time_pct_ {0.95};
-            double expand_time_pct_ {0.3};
             double rewire_time_pct_ {0.7};
+            bool updated_solution_ {false};
+            bool new_goal_ {false};
+            bool control_executing_ {false};
+            bool heading_to_goal_ {false};
 
             enum PlannerState
             {
