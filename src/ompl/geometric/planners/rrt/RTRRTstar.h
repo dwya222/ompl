@@ -58,7 +58,7 @@
 #include <trajectory_msgs/JointTrajectory.h>
 #include <trajectory_msgs/JointTrajectoryPoint.h>
 #include <robo_demo_msgs/JointTrajectoryPointStamped.h>
-#include <robo_demo_msgs/BoolStamped.h>
+#include <robo_demo_msgs/JointTrajectoryPointClearStamped.h>
 
 namespace ompl
 {
@@ -373,7 +373,7 @@ namespace ompl
 
             ompl::base::Cost bestCost() const
             {
-                return bestCost_;
+                return best_cost_;
             }
 
         protected:
@@ -513,10 +513,7 @@ namespace ompl
             base::OptimizationObjectivePtr opt_;
 
             /** \brief The best goal motion. */
-            Motion *bestGoalMotion_{nullptr};
-
-            /** \brief A list of states in the tree that satisfy the goal condition */
-            std::vector<Motion *> goalMotions_;
+            Motion *goal_motion_{nullptr};
 
             /** \brief The status of the tree pruning option. */
             bool useTreePruning_{false};
@@ -561,7 +558,7 @@ namespace ompl
             std::vector<Motion *> startMotions_;
 
             /** \brief Best cost found so far by algorithm */
-            base::Cost bestCost_{std::numeric_limits<double>::quiet_NaN()};
+            base::Cost best_cost_{std::numeric_limits<double>::quiet_NaN()};
 
             /** \brief The cost at which the graph was last pruned */
             base::Cost prunedCost_{std::numeric_limits<double>::quiet_NaN()};
@@ -611,15 +608,17 @@ namespace ompl
             bool fileExists(const std::string& name);
             void changeRoot(Motion *new_root);
             void rewireRoot(ros::Duration time_to_rewire=ros::Duration(0.0));
+            void attemptReroute();
             void evalRoot(Motion *goal);
             void printStateValues(const base::State *state);
             void setShortestPath(base::State *state);
             void newGoalCallbackQueue(const std_msgs::Float64MultiArray::ConstPtr& new_goal_msg);
-            void edgeClearCallbackQueue(const robo_demo_msgs::BoolStamped::ConstPtr& edge_clear_msg);
+            void edgeClearCallbackQueue(
+                const robo_demo_msgs::JointTrajectoryPointClearStamped::ConstPtr& edge_clear_msg);
             void executingToStateCallbackQueue(
                 const robo_demo_msgs::JointTrajectoryPointStamped::ConstPtr& next_state_msg);
             std_msgs::Float64MultiArray::ConstPtr new_goal_msg_;
-            robo_demo_msgs::BoolStamped::ConstPtr edge_clear_msg_;
+            robo_demo_msgs::JointTrajectoryPointClearStamped::ConstPtr edge_clear_msg_;
             robo_demo_msgs::JointTrajectoryPointStamped::ConstPtr next_state_msg_;
             void handleCallbacks(bool new_goal_only=false);
             void newGoalCallbackHandle();
@@ -645,6 +644,7 @@ namespace ompl
             ros::Subscriber edge_clear_sub_;
             ros::Subscriber executing_to_state_sub_;
             ros::Publisher current_path_pub_;
+            double end_control_time_secs_;
             double end_maintain_time_secs_;
             double time_to_maintain_;
             double maintain_time_pct_ {0.95};
@@ -653,12 +653,16 @@ namespace ompl
             bool new_goal_ {false};
             bool control_executing_ {false};
             bool heading_to_goal_ {false};
+            bool need_to_reroute_{false};
+            bool reroute_from_goal_{false};
+            std::vector<Motion *> current_path_;
 
             enum PlannerState
             {
               SEARCH_FOR_SOLUTION,
               WAIT_FOR_UPDATES,
               MAINTAIN_TREE,
+              ATTEMPT_REROUTE,
               GOAL_ACHIEVED
             };
             PlannerState planner_state_ {SEARCH_FOR_SOLUTION};

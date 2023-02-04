@@ -159,8 +159,8 @@ void ompl::geometric::RTRRTstar::setup()
       pdef_->setOptimizationObjective(opt_);
     }
 
-    // Set the bestCost_ and prunedCost_ as infinite
-    bestCost_ = opt_->infiniteCost();
+    // Set the best_cost_ and prunedCost_ as infinite
+    best_cost_ = opt_->infiniteCost();
     prunedCost_ = opt_->infiniteCost();
     // Setup required for moving expandTree outside of solve loop
     // our functor for sorting nearest neighbors
@@ -197,12 +197,11 @@ void ompl::geometric::RTRRTstar::clear()
   if (nn_)
     nn_->clear();
 
-  bestGoalMotion_ = nullptr;
-  goalMotions_.clear();
+  goal_motion_ = nullptr;
   startMotions_.clear();
 
   iterations_ = 0;
-  bestCost_ = base::Cost(std::numeric_limits<double>::quiet_NaN());
+  best_cost_ = base::Cost(std::numeric_limits<double>::quiet_NaN());
   prunedCost_ = base::Cost(std::numeric_limits<double>::quiet_NaN());
   prunedMeasure_ = 0.0;
 }
@@ -268,9 +267,9 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
                   getName().c_str(), si_->getStateSpace()->getName().c_str());
 
 
-    if (bestGoalMotion_)
+    if (goal_motion_)
         OMPL_INFORM("%s: Starting planning with existing solution of cost %.5f", getName().c_str(),
-                    bestCost_.value());
+                    best_cost_.value());
 
     if (useKNearest_)
         OMPL_INFORM("%s: Initial k-nearest value of %u, k_rrt value: %d", getName().c_str(),
@@ -326,10 +325,17 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
             if (new_goal_) {
               planner_state_ = SEARCH_FOR_SOLUTION;
               new_goal_ = false;
+              break;
+            }
+            if (need_to_reroute_) {
+              planner_state_ = ATTEMPT_REROUTE;
+              need_to_reroute_ = false;
             }
             break;
           case MAINTAIN_TREE:
             {
+              OMPL_INFORM("MAINTAIN_TREE, control is executing");
+              ros::Time maintain_tree_start_time = ros::Time::now();
               double rewire_root_secs = (end_maintain_time_secs_ - ros::Time::now().toSec()) * rewire_time_pct_;
               rewireRoot(ros::Duration(rewire_root_secs)); // sets updated_solution_ = true if path to goal updated
               handleCallbacks(true/* new_goal_only */);
@@ -346,8 +352,32 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
                 updated_solution_ = false;
               }
               planner_state_ = WAIT_FOR_UPDATES;
+              OMPL_INFORM("MAINTAIN_TREE took '%f' seconds", (ros::Time::now() - maintain_tree_start_time).toSec());
+              OMPL_INFORM("MAINTAIN_TREE communication time buffer left: '%f' seconds",
+                          ((end_control_time_secs_ - ros::Time::now().toSec())));
+              if ((end_control_time_secs_ - ros::Time::now().toSec()) < 0.0)
+                OMPL_ERROR("MAINTAIN_TREE took too long");
               break;
             }
+          case ATTEMPT_REROUTE:
+            OMPL_INFORM("ATTEMPT_REROUTE, attempting to reroute");
+            attemptReroute();
+            if (updated_solution_) {
+              OMPL_INFORM("Attempt to reroute succeeded (based on updated_solution_ flag).");
+              publishCurrentPath();
+              planner_state_ = WAIT_FOR_UPDATES;
+              updated_solution_ = false;
+            }
+            else {
+              OMPL_INFORM("Attempt to reroute failed.");
+              // What do we do when we fail? should we start searching again or just wait for a solution This probably
+              // depends on what caused the failure. If the goal state is obstructed then there's not really any hope at
+              // finding a different route to the goal should we just wait around for updates or maybe fail to plan and
+              // return out?. If the goal state wasn't obstructed, we just couldn't find a clear route, then we should
+              // keep searching for solutions.
+              planner_state_ = SEARCH_FOR_SOLUTION;
+            }
+            break;
           case GOAL_ACHIEVED:
             break;
         }
@@ -356,10 +386,10 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
 
     // Add our solution (if it exists)
     Motion *newSolution = nullptr;
-    if (bestGoalMotion_)
+    if (goal_motion_)
     {
         // We have an exact solution
-        newSolution = bestGoalMotion_;
+        newSolution = goal_motion_;
     }
     else if (approxGoalMotion_)
     {
@@ -390,21 +420,20 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
         psol.setPlannerName(getName());
 
         // If we don't have a goal motion, the solution is approximate
-        if (!bestGoalMotion_)
+        if (!goal_motion_)
             psol.setApproximate(approxDist_);
 
         // Does the solution satisfy the optimization objective?
-        psol.setOptimized(opt_, newSolution->cost, opt_->isSatisfied(bestCost_));
+        psol.setOptimized(opt_, newSolution->cost, opt_->isSatisfied(best_cost_));
         pdef_->addSolutionPath(psol);
     }
     // No else, we have nothing
 
-    OMPL_INFORM("%s: Created %u new states. Checked %u rewire options. %u goal states in tree. Final solution cost "
-                "%.3f",
-                getName().c_str(), statesGenerated_, rewireTest_, goalMotions_.size(), bestCost_.value());
+    OMPL_INFORM("%s: Created %u new states. Checked %u rewire options. Final solution cost %.3f", getName().c_str(),
+                statesGenerated_, rewireTest_, best_cost_.value());
 
-    // We've added a solution if newSolution == true, and it is an approximate solution if bestGoalMotion_ == false
-    return {newSolution != nullptr, bestGoalMotion_ == nullptr};
+    // We've added a solution if newSolution == true, and it is an approximate solution if goal_motion_ == false
+    return {newSolution != nullptr, goal_motion_ == nullptr};
 }
 
 void ompl::geometric::RTRRTstar::newGoalCallbackQueue(const std_msgs::Float64MultiArray::ConstPtr& new_goal_msg)
@@ -413,7 +442,8 @@ void ompl::geometric::RTRRTstar::newGoalCallbackQueue(const std_msgs::Float64Mul
   new_goal_msg_ = new_goal_msg;
 }
 
-void ompl::geometric::RTRRTstar::edgeClearCallbackQueue(const robo_demo_msgs::BoolStamped::ConstPtr& edge_clear_msg)
+void ompl::geometric::RTRRTstar::edgeClearCallbackQueue(
+    const robo_demo_msgs::JointTrajectoryPointClearStamped::ConstPtr& edge_clear_msg)
 {
   std::lock_guard<std::mutex> lock(edge_clear_mutex_);
   edge_clear_msg_ = edge_clear_msg;
@@ -432,8 +462,8 @@ void ompl::geometric::RTRRTstar::handleCallbacks(bool new_goal_only)
   {
     newGoalCallbackHandle();
     new_goal_msg_.reset();
-    if (new_goal_only) return;
   }
+  if (new_goal_only) return;
   if (edge_clear_msg_)
   {
     edgeClearCallbackHandle();
@@ -452,18 +482,20 @@ void ompl::geometric::RTRRTstar::newGoalCallbackHandle()
   OMPL_WARN("New goal state detected. Changing Planner goal and removing old solutions");
   new_goal_ = true;
   base::State *gstate = si_->allocState();
+  OMPL_WARN("new_goal_msg_->data.size(): '%d'", new_goal_msg_->data.size());
   for (unsigned int i = 0; i < new_goal_msg_->data.size(); i++)
+  {
+    OMPL_WARN("Setting values for i='%d'", i);
     gstate->as<base::RealVectorStateSpace::StateType>()->values[i] = new_goal_msg_->data[i];
+  }
+  OMPL_WARN("Successfully filled goal state values");
   pdef_->setGoalState(gstate);
   checkValidity();
   goal_ = pdef_->getGoal().get();
   goal_s_ = dynamic_cast<base::GoalSampleableRegion *>(goal_);
 
-  /* // Remove previous solutions from goalMotions_ list */
-  for (auto motion : goalMotions_)
-    motion->inGoal = false;
-  goalMotions_.clear();
-  bestGoalMotion_ = nullptr;
+  goal_motion_->inGoal = false;
+  goal_motion_ = nullptr;
 
   // Add shortest path to tree if it is clear and
   // useCheckShortestPath_ is set to true
@@ -482,9 +514,24 @@ void ompl::geometric::RTRRTstar::edgeClearCallbackHandle()
 {
   std::lock_guard<std::mutex> lock(edge_clear_mutex_);
   OMPL_INFORM("In edgeClearCallbackHandle");
-  if (!(edge_clear_msg_->data))
+  if (current_path_.empty())
+    OMPL_ERROR("Current path is empty, expect SEGV");
+  double *next_state_values = current_path_[1]->state->as<base::RealVectorStateSpace::StateType>()->values;
+  for (int i=0; i < state_dimension_; i++)
   {
-    OMPL_WARN("Next node is obstructed, need to reroute");
+    if (edge_clear_msg_->trajectory_point.positions[i] != next_state_values[i])
+    {
+      OMPL_ERROR("Next state mismatch from edge_clear_topic, returning out of cb");
+      return;
+    }
+  }
+  if (!(edge_clear_msg_->clear))
+  {
+    OMPL_WARN("Next motion is obstructed, need to reroute");
+    current_path_[1]->cost = opt_->infiniteCost(); // value = std::numeric_limits<double>::infinity()
+    best_cost_ = opt_->infiniteCost();
+    updateChildCosts(current_path_[1]);
+    need_to_reroute_ = true;
   }
 }
 
@@ -512,6 +559,7 @@ void ompl::geometric::RTRRTstar::executingToStateCallbackHandle()
   ros::Time control_start_time = next_state_msg_->header.stamp;
   // use maintain_time_pct_% of remaining control execution time to maintain tree to leave some time for communication
   end_maintain_time_secs_ = control_start_time.toSec() + (end_control_dur.toSec() * maintain_time_pct_);
+  end_control_time_secs_ = (control_start_time + end_control_dur).toSec();
   changeRoot(next_motion);
 }
 
@@ -520,10 +568,12 @@ void ompl::geometric::RTRRTstar::publishCurrentPath()
   OMPL_INFORM("Publishing current path");
   trajectory_msgs::JointTrajectory path_msg;
   trajectory_msgs::JointTrajectoryPoint next_state_msg;
+  current_path_.clear();
 
-  Motion* iter_motion = bestGoalMotion_;
+  Motion* iter_motion = goal_motion_;
   while (iter_motion != nullptr)
   {
+    current_path_.push_back(iter_motion);
     for (int j=0; j < state_dimension_; j++)
       next_state_msg.positions.push_back(iter_motion->state->as<base::RealVectorStateSpace::StateType>()->values[j]);
     path_msg.points.push_back(next_state_msg);
@@ -532,6 +582,7 @@ void ompl::geometric::RTRRTstar::publishCurrentPath()
   }
   // Points added in starting from goal, so reverse them
   std::reverse(path_msg.points.begin(), path_msg.points.end());
+  std::reverse(current_path_.begin(), current_path_.end());
   path_msg.header.stamp = ros::Time::now();
   current_path_pub_.publish(path_msg);
   OMPL_WARN("Published current path. it: '%lu'", iterations_);
@@ -559,7 +610,7 @@ void ompl::geometric::RTRRTstar::setShortestPath(base::State *goal_state)
     d = si_->distance(new_motion->state, goal_state);
     prev_motion = new_motion;
   } while (d > maxDistance_);
-  bestGoalMotion_ = new_motion;
+  goal_motion_ = new_motion;
   updated_solution_ = true;
 }
 
@@ -577,7 +628,7 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
     // sample random state (with goal biasing)
     // Goal samples are only sampled until a goal is in the tree, to
     // prohibit duplicate goal states.
-    if (goal_s_ && !bestGoalMotion_ && rng_.uniform01() < goalBias_ && goal_s_->canSample())
+    if (goal_s_ && !goal_motion_ && rng_.uniform01() < goalBias_ && goal_s_->canSample())
     {
       goal_s_->sampleGoal(rstate_);
     }
@@ -732,7 +783,7 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
 
       if (useNewStateRejection_)
       {
-        if (opt_->isCostBetterThan(solutionHeuristic(motion), bestCost_))
+        if (opt_->isCostBetterThan(solutionHeuristic(motion), best_cost_))
         {
           nn_->add(motion);
           motion->parent->children.push_back(motion);
@@ -799,20 +850,21 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
       // Add the new motion to the goalMotion_ list, if it satisfies the goal
       if (goal_->isSatisfied(motion->state, &distanceFromGoal))
       {
-        if (bestGoalMotion_)
-          OMPL_ERROR("Already have a bestGoalMotion_ but still found another goal");
+        if (goal_motion_)
+          OMPL_ERROR("Already have a goal_motion_ but still found another goal");
         motion->inGoal = true;
-        OMPL_INFORM("Adding to goalMotions_. Old goalMotions_ size: '%d'", goalMotions_.size());
-        goalMotions_.push_back(motion);
-        OMPL_INFORM("Adding to goalMotions_. New goalMotions_ size: '%d'", goalMotions_.size());
-        check_for_solution = true;
+        goal_motion_ = motion;
+        best_cost_ = goal_motion_->cost;
+        updated_solution_ = true;
+        OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %lu iterations (%u vertices in the graph)",
+                    getName().c_str(), best_cost_.value(), iterations_, nn_->size());
       }
 
       // Checking for solution or iterative improvement
       if (check_for_solution) checkForSolution();
 
       // Checking for approximate solution (closest state found to the goal)
-      if (goalMotions_.size() == 0 && distanceFromGoal < approxDist_)
+      if (!goal_motion_ && distanceFromGoal < approxDist_)
       {
         approxGoalMotion_ = motion;
         approxDist_ = distanceFromGoal;
@@ -825,39 +877,12 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
 
 void ompl::geometric::RTRRTstar::checkForSolution()
 {
-  if (!bestGoalMotion_ && !goalMotions_.empty())
+  // Check if the cost to the goal motion has improved if we have one
+  if (goal_motion_ && opt_->isCostBetterThan(goal_motion_->cost, best_cost_))
   {
-    // We have found our first solution, store it as the best. We only add one
-    // vertex at a time, so there can only be one goal vertex at this moment.
-    bestGoalMotion_ = goalMotions_.front();
-    bestCost_ = bestGoalMotion_->cost;
+    best_cost_ = goal_motion_->cost;
     updated_solution_ = true;
-
-    OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %lu iterations (%u "
-                "vertices in the graph)",
-                getName().c_str(), bestCost_.value(), iterations_, nn_->size());
-  }
-  else
-  {
-    // We already have a solution, iterate through the list of goal vertices
-    // and see if there's any improvement.
-    for (auto &goalMotion : goalMotions_)
-    {
-      // Is this goal motion better than the (current) best?
-      if (opt_->isCostBetterThan(goalMotion->cost, bestCost_))
-      {
-        bestGoalMotion_ = goalMotion;
-        bestCost_ = bestGoalMotion_->cost;
-        updated_solution_ = true;
-        OMPL_INFORM("Found improved solution with cost '%.2f'", bestCost_.value());
-
-        // Check if it satisfies the optimization objective, if it does, break the for loop
-        if (opt_->isSatisfied(bestCost_))
-        {
-          break;
-        }
-      }
-    }
+    OMPL_INFORM("Found improved solution with cost '%.2f'", best_cost_.value());
   }
 }
 
@@ -875,7 +900,7 @@ void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
   prev_root->incCost = opt_->motionCost(new_root->state, prev_root->state);
   prev_root->cost = opt_->combineCosts(new_root->cost, prev_root->incCost);
   current_root_ = new_root;
-  if (current_root_ == bestGoalMotion_)
+  if (current_root_ == goal_motion_)
   {
     planner_state_ = GOAL_ACHIEVED;
     heading_to_goal_ = true;
@@ -948,6 +973,61 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
   OMPL_INFORM("Motions rewired / Motions in tree: %u / %u", iterations, nn_->size());
 }
 
+void ompl::geometric::RTRRTstar::attemptReroute()
+{
+  std::vector<Motion *> nbh;
+  std::vector<Motion *> current_path = current_path_;
+  if (reroute_from_goal_)
+    std::reverse(current_path.begin(), current_path.end());
+
+  // iterate through motions in the tree attempting to rewire
+  for (Motion *current : current_path)
+  {
+    // skip the root
+    if (current == current_root_)
+      continue;
+    // skip this state if it's not valid (there is an obstacle over it)
+    if (!(si_->isValid(current->state)))
+    {
+      if (current == goal_motion_)
+        OMPL_ERROR("Goal state is currently obstructed");
+      continue;
+    }
+    getNeighbors(current, nbh, (maxDistance_ + maxDistance_ * 0.01));
+    for (std::size_t j = 0; j < nbh.size(); ++j)
+    {
+      if (nbh[j] != current->parent)
+      {
+        base::Cost incCost = opt_->motionCost(current->state, nbh[j]->state);
+        base::Cost newCost = opt_->combineCosts(current->cost, incCost);
+        if (opt_->isCostBetterThan(newCost, nbh[j]->cost))
+        {
+          if ((!useKNearest_ || si_->distance(nbh[j]->state, current->state) < maxDistance_) &&
+              si_->checkMotion(current->state, nbh[j]->state))
+          {
+            // Remove this node from its parent list
+            removeFromParent(nbh[j]);
+
+            // Add this node to the new parent
+            nbh[j]->parent = current;
+            nbh[j]->incCost = incCost;
+            nbh[j]->cost = newCost;
+            nbh[j]->parent->children.push_back(nbh[j]);
+
+            // Update the costs_ of the node's children
+            updateChildCosts(nbh[j]);
+            // If we successfully rewired then this is a successful
+            // reroute. Update goal cost and return out
+            checkForSolution();
+            OMPL_INFORM("attemptReroute should have succeeded (make sure updated_solution_ flag is also set to true)");
+            return;
+          }
+        }
+      }
+    }
+  }
+}
+
 inline bool ompl::geometric::RTRRTstar::fileExists(const std::string& name)
 {
   struct stat buffer;
@@ -956,7 +1036,7 @@ inline bool ompl::geometric::RTRRTstar::fileExists(const std::string& name)
 
 ompl::geometric::RTRRTstar::Motion* ompl::geometric::RTRRTstar::getNextMotion()
 {
-  Motion *next_motion = bestGoalMotion_;
+  Motion *next_motion = goal_motion_;
   while (next_motion->parent != current_root_)
   {
     next_motion = next_motion->parent;
@@ -1054,8 +1134,8 @@ void ompl::geometric::RTRRTstar::getPlannerData(base::PlannerData &data) const
   if (nn_)
     nn_->list(motions);
 
-  if (bestGoalMotion_)
-    data.addGoalVertex(base::PlannerDataVertex(bestGoalMotion_->state));
+  if (goal_motion_)
+    data.addGoalVertex(base::PlannerDataVertex(goal_motion_->state));
 
   for (auto &motion : motions)
   {
@@ -1192,13 +1272,13 @@ int ompl::geometric::RTRRTstar::pruneTree(const base::Cost &pruneTreeCost)
         if (leavesToPrune.front()->inGoal == true)
         {
           // Warn if pruning the _best_ goal
-          if (leavesToPrune.front() == bestGoalMotion_)
+          if (leavesToPrune.front() == goal_motion_)
           {
             OMPL_ERROR("%s: Pruning the best goal.", getName().c_str());
           }
           // Remove it
-          goalMotions_.erase(std::remove(goalMotions_.begin(), goalMotions_.end(), leavesToPrune.front()),
-                               goalMotions_.end());
+          /* goalMotions_.erase(std::remove(goalMotions_.begin(), goalMotions_.end(), leavesToPrune.front()), */
+          /*                      goalMotions_.end()); */
         }
 
         // Remove the leaf from its parent
@@ -1277,9 +1357,9 @@ bool ompl::geometric::RTRRTstar::keepCondition(const Motion *motion, const base:
 {
   // We keep if the cost-to-come-heuristic of motion is <= threshold, by checking
   // if !(threshold < heuristic), as if b is not better than a, then a is better than, or equal to, b
-  if (bestGoalMotion_ && motion == bestGoalMotion_)
+  if (goal_motion_ && motion == goal_motion_)
   {
-    // If the threshold is the theoretical minimum, the bestGoalMotion_ will sometimes fail the test due to floating point precision. Avoid that.
+    // If the threshold is the theoretical minimum, the goal_motion_ will sometimes fail the test due to floating point precision. Avoid that.
     return true;
   }
 
@@ -1524,7 +1604,7 @@ bool ompl::geometric::RTRRTstar::sampleUniform(base::State *statePtr)
     // If bestCost is changing a lot by small amounts, this could
     // be prunedCost_ to reduce the number of times the informed sampling
     // transforms are recalculated.
-    return infSampler_->sampleUniform(statePtr, bestCost_);
+    return infSampler_->sampleUniform(statePtr, best_cost_);
   }
   else
   {
