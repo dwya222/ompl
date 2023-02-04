@@ -54,7 +54,6 @@
 #include <ros/ros.h>
 #include <actionlib/client/simple_action_client.h>
 #include <std_msgs/Float64MultiArray.h>
-#include <std_msgs/Bool.h>
 #include <trajectory_msgs/JointTrajectory.h>
 #include <trajectory_msgs/JointTrajectoryPoint.h>
 #include <robo_demo_msgs/JointTrajectoryPointStamped.h>

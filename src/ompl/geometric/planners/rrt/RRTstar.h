@@ -48,6 +48,10 @@
 #include <utility>
 #include <list>
 #include <jsoncpp/json/json.h>
+#include <atomic>
+
+#include <ros/ros.h>
+#include <std_msgs/Bool.h>
 
 namespace ompl
 {
@@ -558,6 +562,17 @@ namespace ompl
             bool fileExists(const std::string& name);
             void savePathInfo(std::vector<Motion *> solution_path);
             Json::Value path_info_json_;
+
+            // ROS stuff
+            int state_dimension_;
+            ros::NodeHandle nh_;
+            ros::Subscriber preempt_planner_sub_;
+            ros::Publisher current_path_pub_;
+            bool return_first_solution_ {false};
+
+            void preemptPlannerCallback(const std_msgs::Bool::ConstPtr& preempt_msg);
+            void publishCurrentPath();
+            std::atomic<bool> preempt_ {false};
         };
     }
 }

@@ -57,7 +57,6 @@
 
 #include <ros/ros.h>
 #include <std_msgs/Float64MultiArray.h>
-#include <std_msgs/Bool.h>
 #include <ros/package.h>
 
 
@@ -458,27 +457,37 @@ void ompl::geometric::RTRRTstar::executingToStateCallbackQueue(
 
 void ompl::geometric::RTRRTstar::handleCallbacks(bool new_goal_only)
 {
-  if (new_goal_msg_)
   {
-    newGoalCallbackHandle();
-    new_goal_msg_.reset();
+    std::lock_guard<std::mutex> lock(new_goal_mutex_);
+    if (new_goal_msg_)
+    {
+      newGoalCallbackHandle();
+      new_goal_msg_.reset();
+    }
   }
   if (new_goal_only) return;
-  if (edge_clear_msg_)
+
   {
-    edgeClearCallbackHandle();
-    edge_clear_msg_.reset();
+    std::lock_guard<std::mutex> lock(edge_clear_mutex_);
+    if (edge_clear_msg_)
+    {
+      edgeClearCallbackHandle();
+      edge_clear_msg_.reset();
+    }
   }
-  if (next_state_msg_)
+
   {
-    executingToStateCallbackHandle();
-    next_state_msg_.reset();
+    std::lock_guard<std::mutex> lock(next_state_mutex_);
+    if (next_state_msg_)
+    {
+      executingToStateCallbackHandle();
+      next_state_msg_.reset();
+    }
   }
 }
 
 void ompl::geometric::RTRRTstar::newGoalCallbackHandle()
 {
-  std::lock_guard<std::mutex> lock(new_goal_mutex_);
   OMPL_WARN("New goal state detected. Changing Planner goal and removing old solutions");
   new_goal_ = true;
   base::State *gstate = si_->allocState();
@@ -512,7 +521,6 @@ void ompl::geometric::RTRRTstar::newGoalCallbackHandle()
 
 void ompl::geometric::RTRRTstar::edgeClearCallbackHandle()
 {
-  std::lock_guard<std::mutex> lock(edge_clear_mutex_);
   OMPL_INFORM("In edgeClearCallbackHandle");
   if (current_path_.empty())
     OMPL_ERROR("Current path is empty, expect SEGV");
@@ -537,7 +545,6 @@ void ompl::geometric::RTRRTstar::edgeClearCallbackHandle()
 
 void ompl::geometric::RTRRTstar::executingToStateCallbackHandle()
 {
-  std::lock_guard<std::mutex> lock(next_state_mutex_);
   OMPL_WARN("In executingToStateCallbackHandle");
   control_executing_ = true;
   Motion *next_motion = getNextMotion();

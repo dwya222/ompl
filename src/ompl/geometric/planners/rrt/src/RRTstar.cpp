@@ -58,6 +58,8 @@
 #include "ompl/base/spaces/RealVectorStateSpace.h"
 
 #include <ros/package.h>
+#include <trajectory_msgs/JointTrajectory.h>
+#include <trajectory_msgs/JointTrajectoryPoint.h>
 
 ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
   : base::Planner(si, "RRTstar")
@@ -96,6 +98,7 @@ ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
+
 }
 
 ompl::geometric::RRTstar::~RRTstar()
@@ -154,6 +157,17 @@ void ompl::geometric::RRTstar::setup()
 
     // Calculate some constants:
     calculateRewiringLowerBounds();
+
+    state_dimension_ = si_->getStateSpace()->getDimension();
+    // ROS stuff
+    if (useSolveOnce_) // useSolveOnce_ is currently a misnomer as it is being repurposed. should be: enable_ros_comm
+    {
+      nh_.param<bool>("return_first_solution", return_first_solution_, false);
+      OMPL_WARN("return first solution: '%d'", return_first_solution_);
+      preempt_planner_sub_ = nh_.subscribe("/preempt_planner", 1, &ompl::geometric::RRTstar::preemptPlannerCallback,
+                                           this);
+      current_path_pub_ = nh_.advertise<trajectory_msgs::JointTrajectory>("/current_path", 1);
+    }
 }
 
 void ompl::geometric::RRTstar::clear()
@@ -176,6 +190,11 @@ void ompl::geometric::RRTstar::clear()
     prunedMeasure_ = 0.0;
 }
 
+void ompl::geometric::RRTstar::preemptPlannerCallback(const std_msgs::Bool::ConstPtr& preempt_msg)
+{
+  preempt_ = preempt_msg->data;
+}
+
 ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTerminationCondition &ptc)
 {
     checkValidity();
@@ -186,9 +205,24 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
       base::State* gstate_initial = si_->allocState();
       if (base::GoalLazySamples* tmp_gls_initial = dynamic_cast<base::GoalLazySamples*>(goal))
       {
+        ros::Time start_sampling_time = ros::Time::now();
         while (!tmp_gls_initial->hasStates())
+        {
           // Wait for goal states to be sampled
+          if (ros::Time::now() - start_sampling_time > ros::Duration(0.01))
+          {
+            trajectory_msgs::JointTrajectory path_msg;
+            path_msg.header.stamp = ros::Time::now();
+            while (current_path_pub_.getNumSubscribers() < 2)
+            {
+              ROS_WARN_THROTTLE(0.2, "Do not have 2 subscribers yet (collision checker and monitor) waiting...");
+              ros::Duration(0.01).sleep();
+            }
+            current_path_pub_.publish(path_msg);
+            return base::PlannerStatus::INVALID_GOAL;
+          }
           continue;
+        }
         // Extract State from GoalStates object
         tmp_gls_initial->sampleGoal(gstate_initial);
         // stop GoalLazySamples sampling thread
@@ -198,6 +232,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
       pdef_->setGoalState(gstate_initial);
       goal = pdef_->getGoal().get();
     }
+    OMPL_INFORM("Switched goal object to GoalState object");
     auto *goal_s = dynamic_cast<base::GoalSampleableRegion *>(goal);
 
     bool symCost = opt_->isSymmetric();
@@ -568,8 +603,8 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             }
         }
 
-        // terminate if a sufficient solution is found (or if only solving once)
-        if (bestGoalMotion_ && (opt_->isSatisfied(bestCost_) || useSolveOnce_))
+        // terminate if a sufficient solution is found (or if only solving once) OR if we want to preempt
+        if ((bestGoalMotion_ && (opt_->isSatisfied(bestCost_) || useSolveOnce_)) || preempt_)
             break;
     }
 
@@ -579,11 +614,28 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     {
         // We have an exact solution
         newSolution = bestGoalMotion_;
+        if (useSolveOnce_) // TODO: misnomer, should be enable_ros_comm
+        {
+          while (current_path_pub_.getNumSubscribers() < 2)
+          {
+            ROS_WARN_THROTTLE(0.2, "Do not have 2 subscribers yet (collision checker and monitor) waiting...");
+            ros::Duration(0.01).sleep();
+          }
+          ros::Duration(0.1).sleep();
+          publishCurrentPath();
+        }
     }
     else if (approxGoalMotion)
     {
         // We don't have a solution, but we do have an approximate solution
         newSolution = approxGoalMotion;
+    }
+    else
+    {
+      // Publish empty path to note a failed planning attempt
+      trajectory_msgs::JointTrajectory path_msg;
+      path_msg.header.stamp = ros::Time::now();
+      current_path_pub_.publish(path_msg);
     }
     // No else, we have nothing
 
@@ -633,6 +685,29 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     return {newSolution != nullptr, bestGoalMotion_ == nullptr};
 }
 
+void ompl::geometric::RRTstar::publishCurrentPath()
+{
+  OMPL_INFORM("Publishing current path");
+  trajectory_msgs::JointTrajectory path_msg;
+  trajectory_msgs::JointTrajectoryPoint next_state_msg;
+  std::vector<Motion *> current_path;
+
+  Motion* iter_motion = bestGoalMotion_;
+  while (iter_motion != nullptr)
+  {
+    current_path.push_back(iter_motion);
+    for (int j=0; j < state_dimension_; j++)
+      next_state_msg.positions.push_back(iter_motion->state->as<base::RealVectorStateSpace::StateType>()->values[j]);
+    path_msg.points.push_back(next_state_msg);
+    next_state_msg.positions.clear();
+    iter_motion = iter_motion->parent;
+  }
+  // Points added in starting from goal, so reverse them
+  std::reverse(path_msg.points.begin(), path_msg.points.end());
+  std::reverse(current_path.begin(), current_path.end());
+  path_msg.header.stamp = ros::Time::now();
+  current_path_pub_.publish(path_msg);
+}
 
 inline bool ompl::geometric::RRTstar::fileExists(const std::string& name)
 {
