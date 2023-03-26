@@ -53,6 +53,7 @@
 
 #include <ros/ros.h>
 #include <actionlib/client/simple_action_client.h>
+#include <std_msgs/Float64.h>
 #include <std_msgs/Float64MultiArray.h>
 #include <trajectory_msgs/JointTrajectory.h>
 #include <trajectory_msgs/JointTrajectoryPoint.h>
@@ -309,6 +310,31 @@ namespace ompl
                 return nearestNeighborDist_;
             }
 
+            /** \brief Controls whether the tree will expand for some time before outputting the first solution. */
+            void setPrimeTree(bool primeTree)
+            {
+                primeTree_ = primeTree;
+            }
+
+            /** \brief Get the state of tree priming. */
+            bool getPrimeTree() const
+            {
+                return primeTree_;
+            }
+
+            /** \brief Controls how many seconds the tree is allowed to expand before outputting a solution at first. */
+            void setPrimeTreeSecs(double primeTreeSecs)
+            {
+                primeTreeSecs_ = primeTreeSecs;
+            }
+
+            /** \brief Get the amount of seconds allocated for tree priming. */
+            double getPrimeTreeSecs() const
+            {
+                return primeTreeSecs_;
+            }
+
+
             /** \brief Set the batch size used for sample ordering*/
             void setBatchSize(unsigned int batchSize)
             {
@@ -550,6 +576,12 @@ namespace ompl
             /** \brief Option to only add nodes when nearest neighbor farther than dist. Disabled if equal to 0.*/
             double nearestNeighborDist_{0.};
 
+            /** \brief Option to allow tree to expand for some time before outputting a solution. */
+            bool primeTree_{true};
+
+            /** \brief Option for amount of seconds to prime tree for initially*/
+            double primeTreeSecs_{0.};
+
             /** \brief The size of the batches. */
             unsigned int batchSize_{1u};
 
@@ -643,6 +675,7 @@ namespace ompl
             ros::Subscriber edge_clear_sub_;
             ros::Subscriber executing_to_state_sub_;
             ros::Publisher current_path_pub_;
+            ros::Publisher rewire_time_pub_;
             double end_control_time_secs_;
             double end_maintain_time_secs_;
             double time_to_maintain_;

@@ -267,6 +267,30 @@ namespace ompl
                 return useOrderedSampling_;
             }
 
+            /** \brief Controls maximum number of near neighbors allowed. */
+            void setMaxNeighbors(unsigned int maxNeighbors)
+            {
+                maxNeighbors_ = maxNeighbors;
+            }
+
+            /** \brief Get the maximum number of near neighbors. */
+            unsigned int getMaxNeighbors() const
+            {
+                return maxNeighbors_;
+            }
+
+            /** \brief Controls how close the nearest neighbor can be. */
+            void setNearestNeighborDist(double nearestNeighborDist)
+            {
+                nearestNeighborDist_ = nearestNeighborDist;
+            }
+
+            /** \brief Get the nearest neighbor distance. */
+            unsigned int getNearestNeighborDist() const
+            {
+                return nearestNeighborDist_;
+            }
+
             /** \brief Set the batch size used for sample ordering*/
             void setBatchSize(unsigned int batchSize)
             {
@@ -323,17 +347,14 @@ namespace ompl
                 return numSampleAttempts_;
             }
 
-            /** \brief Controls whether the solution loop terminates on first solution or continues until the given
-             * planner termination condition is acheived. */
-            void setSolveOnce(bool solve_once)
+            void setEnableRosComm(bool enable_ros_comm)
             {
-                useSolveOnce_ = solve_once;
+                enableRosComm_ = enable_ros_comm;
             }
 
-            /** \brief Get the state of use solve once. */
-            bool getSolveOnce() const
+            bool getEnableRosComm() const
             {
-                return useSolveOnce_;
+                return enableRosComm_;
             }
 
             /** \brief Controls switching the initial goal state to a simple GoalState object before solving. */
@@ -520,14 +541,19 @@ namespace ompl
             /** \brief The number of attempts to make at informed sampling */
             unsigned int numSampleAttempts_{100u};
 
-            /** \brief Option to return first solution (and disregard planner termination condition. */
-            bool useSolveOnce_{false};
+            bool enableRosComm_{false};
 
             /** \brief Option to switch the GoalLazySamples goal state object to the more simple GoalState object. */
             bool useSimpleGoal_{false};
 
             /** \brief Option to create batches of samples and order them. */
             bool useOrderedSampling_{false};
+
+            /** \brief Option to only add nodes when nearest neighbors is less than max. Disabled if equal to 0.*/
+            unsigned int maxNeighbors_{0};
+
+            /** \brief Option to only add nodes when nearest neighbor farther than dist. Disabled if equal to 0.*/
+            double nearestNeighborDist_{0.};
 
             /** \brief The size of the batches. */
             unsigned int batchSize_{1u};

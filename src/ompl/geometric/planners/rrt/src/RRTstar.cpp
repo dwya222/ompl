@@ -93,8 +93,12 @@ ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
     Planner::declareParam<bool>("focus_search", this, &RRTstar::setFocusSearch, &RRTstar::getFocusSearch, "0,1");
     Planner::declareParam<unsigned int>("number_sampling_attempts", this, &RRTstar::setNumSamplingAttempts,
                                         &RRTstar::getNumSamplingAttempts, "10:10:100000");
-    Planner::declareParam<bool>("solve_once", this, &RRTstar::setSolveOnce, &RRTstar::getSolveOnce, "0,1");
+    Planner::declareParam<bool>("enable_ros_comm", this, &RRTstar::setEnableRosComm, &RRTstar::getEnableRosComm, "0,1");
     Planner::declareParam<bool>("simple_goal", this, &RRTstar::setSimpleGoal, &RRTstar::getSimpleGoal, "0,1");
+    Planner::declareParam<unsigned int>("max_neighbors", this, &RRTstar::setMaxNeighbors, &RRTstar::getMaxNeighbors,
+                                        "0:1:1000");
+    Planner::declareParam<double>("nearest_neighbor", this, &RRTstar::setNearestNeighborDist,
+                                  &RRTstar::getNearestNeighborDist, "0.:.01:10.");
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
@@ -112,7 +116,7 @@ void ompl::geometric::RRTstar::setup()
     tools::SelfConfig sc(si_, getName());
     sc.configurePlannerRange(maxDistance_);
     OMPL_WARN("maxDistance_: '%f'", maxDistance_);
-    OMPL_WARN("useSolveOnce_: '%d'", useSolveOnce_);
+    OMPL_WARN("Ros communication enabled: '%d'", enableRosComm_);
     if (!si_->getStateSpace()->hasSymmetricDistance() || !si_->getStateSpace()->hasSymmetricInterpolate())
     {
         OMPL_WARN("%s requires a state space with symmetric distance and symmetric interpolation.", getName().c_str());
@@ -160,7 +164,7 @@ void ompl::geometric::RRTstar::setup()
 
     state_dimension_ = si_->getStateSpace()->getDimension();
     // ROS stuff
-    if (useSolveOnce_) // useSolveOnce_ is currently a misnomer as it is being repurposed. should be: enable_ros_comm
+    if (enableRosComm_)
     {
       nh_.param<bool>("return_first_solution", return_first_solution_, false);
       OMPL_WARN("return first solution: '%d'", return_first_solution_);
@@ -357,6 +361,19 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
 
             // Find nearby neighbors of the new motion
             getNeighbors(motion, nbh);
+
+            // Density-based sample rejection: skip this iteration if density exceeded
+            double distanceFromGoalSamRej;
+            if (maxNeighbors_ == 0 || goal->isSatisfied(dstate, &distanceFromGoalSamRej))
+              { /* do not check for sampling density */ }
+            else if ((nbh.size() > maxNeighbors_) || motion->incCost.value() < nearestNeighborDist_)
+            {
+              /* if (nbh_.size() > maxNeighbors_) */
+              /*   OMPL_WARN("Max neighbor rejection, nbh.size(): '%d'", nbh_.size()); */
+              /* if (motion->incCost.value() < nearestNeighborDist_) */
+              /*   OMPL_WARN("Nearest Neighbor rejection, nn distance: '%f'", motion->incCost); */
+              continue;
+            }
 
             rewireTest += nbh.size();
             ++statesGenerated;
@@ -604,7 +621,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
         }
 
         // terminate if a sufficient solution is found (or if only solving once) OR if we want to preempt
-        if ((bestGoalMotion_ && (opt_->isSatisfied(bestCost_) || useSolveOnce_)) || preempt_)
+        if ((bestGoalMotion_ && (opt_->isSatisfied(bestCost_) || enableRosComm_)) || preempt_)
             break;
     }
 
@@ -614,7 +631,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     {
         // We have an exact solution
         newSolution = bestGoalMotion_;
-        if (useSolveOnce_) // TODO: misnomer, should be enable_ros_comm
+        if (enableRosComm_)
         {
           while (current_path_pub_.getNumSubscribers() < 2)
           {

@@ -98,6 +98,9 @@ ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
                                         "0:1:1000");
     Planner::declareParam<double>("nearest_neighbor", this, &RTRRTstar::setNearestNeighborDist,
                                   &RTRRTstar::getNearestNeighborDist, "0.:.01:10.");
+    Planner::declareParam<bool>("prime_tree", this, &RTRRTstar::setPrimeTree, &RTRRTstar::getPrimeTree, "0,1");
+    Planner::declareParam<double>("prime_tree_secs", this, &RTRRTstar::setPrimeTreeSecs, &RTRRTstar::getPrimeTreeSecs,
+                                  "0.:.01:30.");
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
@@ -108,6 +111,7 @@ ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
     executing_to_state_sub_ = nh_.subscribe("/executing_to_state", 1,
                                             &ompl::geometric::RTRRTstar::executingToStateCallbackQueue, this);
     current_path_pub_ = nh_.advertise<trajectory_msgs::JointTrajectory>("/current_path", 1);
+    rewire_time_pub_ = nh_.advertise<std_msgs::Float64>("/rewire_time", 10);
     ros::Duration(0.5).sleep(); // Give publishers & subscribers time to connect
 }
 
@@ -157,6 +161,7 @@ void ompl::geometric::RTRRTstar::setup()
       // Store the new objective in the problem def'n
       pdef_->setOptimizationObjective(opt_);
     }
+    OMPL_WARN("Optimization objective: '%s'", opt_->getDescription().c_str());
 
     // Set the best_cost_ and prunedCost_ as infinite
     best_cost_ = opt_->infiniteCost();
@@ -303,7 +308,12 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
         {
           case SEARCH_FOR_SOLUTION:
             handleCallbacks(true/* new_goal_only */);
-            expandTree(); // sets updated_solution_ = true if path to goal found/updated
+            // Expand tree for initially for a set amount of time if primeTree_ is true
+            if (primeTree_ && iterations_ == 1)
+              expandTree(ros::Duration(primeTreeSecs_));
+            else
+              expandTree();
+            // expandTree method sets updated_solution_ = true if path to goal found/updated
             if (updated_solution_) {
               publishCurrentPath();
               planner_state_ = WAIT_FOR_UPDATES;
@@ -493,10 +503,7 @@ void ompl::geometric::RTRRTstar::newGoalCallbackHandle()
   base::State *gstate = si_->allocState();
   OMPL_WARN("new_goal_msg_->data.size(): '%d'", new_goal_msg_->data.size());
   for (unsigned int i = 0; i < new_goal_msg_->data.size(); i++)
-  {
-    OMPL_WARN("Setting values for i='%d'", i);
     gstate->as<base::RealVectorStateSpace::StateType>()->values[i] = new_goal_msg_->data[i];
-  }
   OMPL_WARN("Successfully filled goal state values");
   pdef_->setGoalState(gstate);
   checkValidity();
@@ -529,7 +536,15 @@ void ompl::geometric::RTRRTstar::edgeClearCallbackHandle()
   {
     if (edge_clear_msg_->trajectory_point.positions[i] != next_state_values[i])
     {
-      OMPL_ERROR("Next state mismatch from edge_clear_topic, returning out of cb");
+      OMPL_ERROR("Next state mismatch from edge_clear_topic, returning out of cb (got %f, expected %f)",
+                 edge_clear_msg_->trajectory_point.positions[i], next_state_values[i]);
+      OMPL_ERROR("expected: [%f, %f, %f, %f, %f, %f, %f]", next_state_values[0], next_state_values[1],
+                 next_state_values[2], next_state_values[3], next_state_values[4], next_state_values[5],
+                 next_state_values[6]);
+      OMPL_ERROR("recieved: [%f, %f, %f, %f, %f, %f, %f]", edge_clear_msg_->trajectory_point.positions[0],
+                 edge_clear_msg_->trajectory_point.positions[1], edge_clear_msg_->trajectory_point.positions[2],
+                 edge_clear_msg_->trajectory_point.positions[3], edge_clear_msg_->trajectory_point.positions[4],
+                 edge_clear_msg_->trajectory_point.positions[5], edge_clear_msg_->trajectory_point.positions[6]);
       return;
     }
   }
@@ -879,7 +894,12 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
     }
   } while (ros::Time::now() - expand_tree_start_time_ < time_to_expand);
   if (time_to_expand != ros::Duration(0.0))
+  {
+    OMPL_INFORM("Expanded tree for '%f' seconds", (ros::Time::now() - expand_tree_start_time_));
     OMPL_INFORM("Expand tree added '%d' motions in '%lu' iterations", added_motion_count, iter);
+    OMPL_INFORM("Took an average of '%f' seconds to add each motion",
+               ((ros::Time::now() - expand_tree_start_time_).toSec() / added_motion_count));
+  }
 }
 
 void ompl::geometric::RTRRTstar::checkForSolution()
@@ -941,6 +961,7 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
       break;
     }
     iterations++;
+    /* ros::Time root_rewire_iter_start_time = ros::Time::now(); */
     rr_motion_ = rootRewireQueue.front();
     rootRewireQueue.pop_front();
     getNeighbors(rr_motion_, rr_nbh_, (maxDistance_ + maxDistance_ * 0.01));
@@ -973,11 +994,19 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
       if (rootRewireSet.insert(rr_nbh_[i]).second == true)
         rootRewireQueue.push_back(rr_nbh_[i]);
     }
+    /* ros::Duration root_rewire_iter_dur = ros::Time::now() - root_rewire_iter_start_time; */
+    /* OMPL_INFORM("REWIRE iteration: %d, duration: %f, motions in tree: %u", iterations, root_rewire_iter_dur.toSec(), */
+    /*             nn_->size()); */
   }
   checkForSolution();
-  if (rootRewireQueue.empty())
-    OMPL_INFORM("Rewired until queue empty for '%f' seconds", (ros::Time::now() - root_rewire_start_time_).toSec());
-  OMPL_INFORM("Motions rewired / Motions in tree: %u / %u", iterations, nn_->size());
+  /* OMPL_INFORM("Rewire Queue empty: %d", rootRewireQueue.empty()) */
+  OMPL_INFORM("Rewired for '%f' seconds", (ros::Time::now() - root_rewire_start_time_).toSec());
+  OMPL_INFORM("Motions rewired / Motions in tree: '%u / %u'", iterations, nn_->size());
+  double rewire_time_per_iter = (ros::Time::now() - root_rewire_start_time_).toSec() / iterations;
+  OMPL_INFORM("Took an average of '%f' seconds to rewire each motion", rewire_time_per_iter);
+  std_msgs::Float64 rewire_time_msg;
+  rewire_time_msg.data = rewire_time_per_iter;
+  rewire_time_pub_.publish(rewire_time_msg);
 }
 
 void ompl::geometric::RTRRTstar::attemptReroute()
@@ -1119,7 +1148,6 @@ void ompl::geometric::RTRRTstar::updateChildCosts(Motion *m)
 
 void ompl::geometric::RTRRTstar::freeMemory()
 {
-  OMPL_WARN("DWYDBG: freeMemory called in RTRRTstar");
   if (nn_)
   {
     std::vector<Motion *> motions;
