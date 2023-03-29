@@ -217,9 +217,9 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
           {
             trajectory_msgs::JointTrajectory path_msg;
             path_msg.header.stamp = ros::Time::now();
-            while (current_path_pub_.getNumSubscribers() < 2)
+            while (current_path_pub_.getNumSubscribers() < 3)
             {
-              ROS_WARN_THROTTLE(0.2, "Do not have 2 subscribers yet (collision checker and monitor) waiting...");
+              ROS_WARN_THROTTLE(0.2, "Do not have 3 subscribers yet (collision checker and monitor) waiting...");
               ros::Duration(0.01).sleep();
             }
             current_path_pub_.publish(path_msg);
@@ -621,7 +621,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
         }
 
         // terminate if a sufficient solution is found (or if only solving once) OR if we want to preempt
-        if ((bestGoalMotion_ && (opt_->isSatisfied(bestCost_) || enableRosComm_)) || preempt_)
+        if ((bestGoalMotion_ && (opt_->isSatisfied(bestCost_) || return_first_solution_)) || preempt_)
             break;
     }
 
@@ -633,9 +633,9 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
         newSolution = bestGoalMotion_;
         if (enableRosComm_)
         {
-          while (current_path_pub_.getNumSubscribers() < 2)
+          while (current_path_pub_.getNumSubscribers() < 3)
           {
-            ROS_WARN_THROTTLE(0.2, "Do not have 2 subscribers yet (collision checker and monitor) waiting...");
+            ROS_WARN_THROTTLE(0.2, "Do not have 3 subscribers yet (collision checker and monitor) waiting...");
             ros::Duration(0.01).sleep();
           }
           ros::Duration(0.1).sleep();
@@ -650,9 +650,9 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     else
     {
       // Publish empty path to note a failed planning attempt
-      trajectory_msgs::JointTrajectory path_msg;
-      path_msg.header.stamp = ros::Time::now();
-      current_path_pub_.publish(path_msg);
+      /* trajectory_msgs::JointTrajectory path_msg; */
+      /* path_msg.header.stamp = ros::Time::now(); */
+      /* current_path_pub_.publish(path_msg); */
     }
     // No else, we have nothing
 
