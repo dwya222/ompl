@@ -883,11 +883,11 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
                     getName().c_str(), best_cost_.value(), iterations_, nn_->size());
         std_msgs::Int64 iter_msg;
         iter_msg.data = iterations_;
-        while (solution_iter_pub_.getNumSubscribers() < 1)
-        {
-          ROS_WARN_THROTTLE(0.2, "solution_iter_pub_ does not have 1 subscriber yet waiting...");
-          ros::Duration(0.01).sleep();
-        }
+        /* while (solution_iter_pub_.getNumSubscribers() < 1) */
+        /* { */
+        /*   ROS_WARN_THROTTLE(0.2, "solution_iter_pub_ does not have 1 subscriber yet waiting..."); */
+        /*   ros::Duration(0.01).sleep(); */
+        /* } */
         solution_iter_pub_.publish(iter_msg);
       }
 
