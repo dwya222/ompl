@@ -112,6 +112,7 @@ ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
                                             &ompl::geometric::RTRRTstar::executingToStateCallbackQueue, this);
     current_path_pub_ = nh_.advertise<trajectory_msgs::JointTrajectory>("/current_path", 1);
     rewire_time_pub_ = nh_.advertise<std_msgs::Float64>("/rewire_time", 10);
+    solution_iter_pub_ = nh_.advertise<std_msgs::Int64>("/solution_iterations", 1);
     ros::Duration(0.5).sleep(); // Give publishers & subscribers time to connect
 }
 
@@ -880,6 +881,14 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
         updated_solution_ = true;
         OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %lu iterations (%u vertices in the graph)",
                     getName().c_str(), best_cost_.value(), iterations_, nn_->size());
+        std_msgs::Int64 iter_msg;
+        iter_msg.data = iterations_;
+        while (solution_iter_pub_.getNumSubscribers() < 1)
+        {
+          ROS_WARN_THROTTLE(0.2, "solution_iter_pub_ does not have 1 subscriber yet waiting...");
+          ros::Duration(0.01).sleep();
+        }
+        solution_iter_pub_.publish(iter_msg);
       }
 
       // Checking for solution or iterative improvement

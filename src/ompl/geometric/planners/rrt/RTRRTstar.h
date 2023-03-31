@@ -54,6 +54,7 @@
 #include <ros/ros.h>
 #include <actionlib/client/simple_action_client.h>
 #include <std_msgs/Float64.h>
+#include <std_msgs/Int64.h>
 #include <std_msgs/Float64MultiArray.h>
 #include <trajectory_msgs/JointTrajectory.h>
 #include <trajectory_msgs/JointTrajectoryPoint.h>
@@ -676,6 +677,7 @@ namespace ompl
             ros::Subscriber executing_to_state_sub_;
             ros::Publisher current_path_pub_;
             ros::Publisher rewire_time_pub_;
+            ros::Publisher solution_iter_pub_;
             double end_control_time_secs_;
             double end_maintain_time_secs_;
             double time_to_maintain_;

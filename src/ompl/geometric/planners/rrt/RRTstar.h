@@ -52,6 +52,7 @@
 
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/Int64.h>
 
 namespace ompl
 {
@@ -594,6 +595,7 @@ namespace ompl
             ros::NodeHandle nh_;
             ros::Subscriber preempt_planner_sub_;
             ros::Publisher current_path_pub_;
+            ros::Publisher solution_iter_pub_;
             bool return_first_solution_ {false};
 
             void preemptPlannerCallback(const std_msgs::Bool::ConstPtr& preempt_msg);

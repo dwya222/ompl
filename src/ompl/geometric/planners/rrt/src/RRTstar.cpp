@@ -171,6 +171,7 @@ void ompl::geometric::RRTstar::setup()
       preempt_planner_sub_ = nh_.subscribe("/preempt_planner", 1, &ompl::geometric::RRTstar::preemptPlannerCallback,
                                            this);
       current_path_pub_ = nh_.advertise<trajectory_msgs::JointTrajectory>("/current_path", 1);
+      solution_iter_pub_ = nh_.advertise<std_msgs::Int64>("/solution_iterations", 1);
     }
 }
 
@@ -222,6 +223,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
               ROS_WARN_THROTTLE(0.2, "Do not have 3 subscribers yet (collision checker and monitor) waiting...");
               ros::Duration(0.01).sleep();
             }
+            OMPL_ERROR("Returning INVALID_GOAL, could not sample goal states");
             current_path_pub_.publish(path_msg);
             return base::PlannerStatus::INVALID_GOAL;
           }
@@ -564,6 +566,16 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
                     OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %u iterations (%u "
                                 "vertices in the graph)",
                                 getName().c_str(), bestCost_.value(), iterations_, nn_->size());
+                    std_msgs::Int64 iter_msg;
+                    iter_msg.data = iterations_;
+                    while (solution_iter_pub_.getNumSubscribers() < 1)
+                    {
+                      ROS_WARN_THROTTLE(0.2, "solution_iter_pub_ does not have 1 subscriber yet waiting...");
+                      ROS_WARN_STREAM_THROTTLE(0.2, "numSub: " << solution_iter_pub_.getNumSubscribers());
+
+                      ros::Duration(0.01).sleep();
+                    }
+                    solution_iter_pub_.publish(iter_msg);
                 }
                 else
                 {
@@ -638,7 +650,6 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             ROS_WARN_THROTTLE(0.2, "Do not have 3 subscribers yet (collision checker and monitor) waiting...");
             ros::Duration(0.01).sleep();
           }
-          ros::Duration(0.1).sleep();
           publishCurrentPath();
         }
     }
