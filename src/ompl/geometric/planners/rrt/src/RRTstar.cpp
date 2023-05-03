@@ -645,9 +645,9 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
         newSolution = bestGoalMotion_;
         if (enableRosComm_)
         {
-          while (current_path_pub_.getNumSubscribers() < 3)
+          while (current_path_pub_.getNumSubscribers() < 1)
           {
-            ROS_WARN_THROTTLE(0.2, "Do not have 3 subscribers yet (collision checker and monitor) waiting...");
+            ROS_WARN_THROTTLE(0.2, "Do not have 1 subscriber yet, waiting...");
             ros::Duration(0.01).sleep();
           }
           publishCurrentPath();
@@ -734,6 +734,7 @@ void ompl::geometric::RRTstar::publishCurrentPath()
   std::reverse(path_msg.points.begin(), path_msg.points.end());
   std::reverse(current_path.begin(), current_path.end());
   path_msg.header.stamp = ros::Time::now();
+  OMPL_WARN("Publishing current path");
   current_path_pub_.publish(path_msg);
 }
 

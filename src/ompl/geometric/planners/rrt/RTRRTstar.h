@@ -276,15 +276,27 @@ namespace ompl
             }
 
             /** \brief Controls whether the shortest path to the goal is checked when the goal state changes */
-            void setCheckShortestPath(bool checkShortestPath)
+            void setCheckShortestPath(bool check_shortest_path)
             {
-                useCheckShortestPath_ = checkShortestPath;
+                check_shortest_path_ = check_shortest_path;
             }
 
             /** \brief Get the state of check shortest path. */
             bool getCheckShortestPath() const
             {
-                return useCheckShortestPath_;
+                return check_shortest_path_;
+            }
+
+            /** \brief Controls whether root rewiring will be executed*/
+            void setEnableRootRewiring(bool enable_root_rewiring)
+            {
+                enable_root_rewiring_ = enable_root_rewiring;
+            }
+
+            /** \brief Get the state of root rewiring. */
+            bool getRootRewiringEnabled() const
+            {
+                return enable_root_rewiring_;
             }
 
             /** \brief Controls maximum number of near neighbors allowed. */
@@ -569,7 +581,10 @@ namespace ompl
             bool useOrderedSampling_{false};
 
             /** \brief Option to check if shortest path is clear and use it if it is. */
-            bool useCheckShortestPath_{false};
+            bool check_shortest_path_{false};
+
+            /** \brief Option to disable root rewiring. */
+            bool enable_root_rewiring_{true};
 
             /** \brief Option to only add nodes when nearest neighbors is less than max. Disabled if equal to 0.*/
             unsigned int maxNeighbors_{0};
@@ -668,7 +683,6 @@ namespace ompl
             std::vector<base::Cost> rr_inc_costs_;
             std::vector<std::size_t> rr_sorted_cost_indices_;
             std::vector<int> rr_valid_;
-            ros::Time root_rewire_start_time_;
             Motion *rr_motion_;
             Motion *current_root_;
             ros::NodeHandle nh_;

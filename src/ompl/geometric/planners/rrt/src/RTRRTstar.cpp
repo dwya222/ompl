@@ -94,6 +94,8 @@ ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
                                         &RTRRTstar::getNumSamplingAttempts, "10:10:100000");
     Planner::declareParam<bool>("check_shortest_path", this, &RTRRTstar::setCheckShortestPath,
                                 &RTRRTstar::getCheckShortestPath, "0,1");
+    Planner::declareParam<bool>("enable_root_rewiring", this, &RTRRTstar::setEnableRootRewiring,
+                                &RTRRTstar::getRootRewiringEnabled, "0,1");
     Planner::declareParam<unsigned int>("max_neighbors", this, &RTRRTstar::setMaxNeighbors, &RTRRTstar::getMaxNeighbors,
                                         "0:1:1000");
     Planner::declareParam<double>("nearest_neighbor", this, &RTRRTstar::setNearestNeighborDist,
@@ -289,8 +291,8 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
     OMPL_WARN("Max distance: '%f'", maxDistance_);
 
     // Add shortest path to tree if it is clear and
-    // useCheckShortestPath_ is set to true
-    if (useCheckShortestPath_)
+    // check_shortest_path_ is set to true
+    if (check_shortest_path_)
     {
       auto *initial_goal_state = dynamic_cast<base::GoalState *>(goal_);
       if (si_->checkMotion(current_root_->state, initial_goal_state->getState()))
@@ -347,7 +349,14 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
               OMPL_INFORM("MAINTAIN_TREE, control is executing");
               ros::Time maintain_tree_start_time = ros::Time::now();
               double rewire_root_secs = (end_maintain_time_secs_ - ros::Time::now().toSec()) * rewire_time_pct_;
-              rewireRoot(ros::Duration(rewire_root_secs)); // sets updated_solution_ = true if path to goal updated
+              if (enable_root_rewiring_)
+              {
+                rewireRoot(ros::Duration(rewire_root_secs)); // sets updated_solution_ = true if path to goal updated
+              }
+              else
+              {
+                ros::Duration(rewire_root_secs).sleep();
+              }
               handleCallbacks(true/* new_goal_only */);
               if (new_goal_) {
                 planner_state_ = SEARCH_FOR_SOLUTION;
@@ -515,16 +524,16 @@ void ompl::geometric::RTRRTstar::newGoalCallbackHandle()
   goal_motion_ = nullptr;
 
   // Add shortest path to tree if it is clear and
-  // useCheckShortestPath_ is set to true
-  if (useCheckShortestPath_)
-  {
-    auto *goal = dynamic_cast<base::GoalState *>(goal_);
-    if (si_->checkMotion(current_root_->state, goal->getState()))
-    {
-      OMPL_WARN("Shortest path between root and goal clear, adding motions along shortest path");
-      setShortestPath(goal->getState());
-    }
-  }
+  // check_shortest_path_ is set to true
+  /* if (check_shortest_path_) */
+  /* { */
+  /*   auto *goal = dynamic_cast<base::GoalState *>(goal_); */
+  /*   if (si_->checkMotion(current_root_->state, goal->getState())) */
+  /*   { */
+  /*     OMPL_WARN("Shortest path between root and goal clear, adding motions along shortest path"); */
+  /*     setShortestPath(goal->getState()); */
+  /*   } */
+  /* } */
 }
 
 void ompl::geometric::RTRRTstar::edgeClearCallbackHandle()
@@ -607,6 +616,11 @@ void ompl::geometric::RTRRTstar::publishCurrentPath()
   std::reverse(path_msg.points.begin(), path_msg.points.end());
   std::reverse(current_path_.begin(), current_path_.end());
   path_msg.header.stamp = ros::Time::now();
+  while (current_path_pub_.getNumSubscribers() < 2)
+  {
+    ROS_WARN_THROTTLE(0.2, "current_path_pub_ does not have 2 subscribers yet waiting...");
+    ros::Duration(0.01).sleep();
+  }
   current_path_pub_.publish(path_msg);
   OMPL_WARN("Published current path. it: '%lu'", iterations_);
 }
@@ -618,13 +632,15 @@ void ompl::geometric::RTRRTstar::setShortestPath(base::State *goal_state)
   base::State *new_state;
   Motion *prev_motion = current_root_;
   double d = si_->distance(prev_motion->state, goal_state);
-  do {
+  while (d != 0)
+  {
     new_motion = new Motion(si_);
     new_state = si_->allocState();
     if (d > maxDistance_)
-      si_->getStateSpace()->interpolate(current_root_->state, goal_state, maxDistance_ / d, new_state);
+      si_->getStateSpace()->interpolate(prev_motion->state, goal_state, maxDistance_ / d, new_state);
     else
       new_state = goal_state;
+    printStateValues(new_state);
     si_->copyState(new_motion->state, new_state);
     new_motion->parent = prev_motion;
     new_motion->incCost = opt_->motionCost(prev_motion->state, new_state);
@@ -632,9 +648,12 @@ void ompl::geometric::RTRRTstar::setShortestPath(base::State *goal_state)
     nn_->add(new_motion);
     d = si_->distance(new_motion->state, goal_state);
     prev_motion = new_motion;
-  } while (d > maxDistance_);
+  }
   goal_motion_ = new_motion;
+  best_cost_ = goal_motion_->cost;
   updated_solution_ = true;
+  OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %lu iterations (%u vertices in the graph)",
+              getName().c_str(), best_cost_.value(), iterations_, nn_->size());
 }
 
 void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
@@ -957,14 +976,14 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
   rootRewireQueue.push_front(current_root_);
   rootRewireSet.insert(current_root_);
 
-  root_rewire_start_time_ = ros::Time::now();
+  ros::Time root_rewire_start_time = ros::Time::now();
   unsigned int iterations = 0;
 
   while (!rootRewireQueue.empty())
   {
     // if time_to_rewire is 0.0 seconds (default), then rewire until
     // queue is empty
-    if (time_to_rewire != ros::Duration(0.0) && (ros::Time::now() - root_rewire_start_time_ > time_to_rewire))
+    if (time_to_rewire != ros::Duration(0.0) && (ros::Time::now() - root_rewire_start_time > time_to_rewire))
     {
       OMPL_INFORM("Time to rewire up, breaking out of rewireRoot");
       break;
@@ -1009,9 +1028,9 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
   }
   checkForSolution();
   /* OMPL_INFORM("Rewire Queue empty: %d", rootRewireQueue.empty()) */
-  OMPL_INFORM("Rewired for '%f' seconds", (ros::Time::now() - root_rewire_start_time_).toSec());
+  OMPL_INFORM("Rewired for '%f' seconds", (ros::Time::now() - root_rewire_start_time).toSec());
   OMPL_INFORM("Motions rewired / Motions in tree: '%u / %u'", iterations, nn_->size());
-  double rewire_time_per_iter = (ros::Time::now() - root_rewire_start_time_).toSec() / iterations;
+  double rewire_time_per_iter = (ros::Time::now() - root_rewire_start_time).toSec() / iterations;
   OMPL_INFORM("Took an average of '%f' seconds to rewire each motion", rewire_time_per_iter);
   std_msgs::Float64 rewire_time_msg;
   rewire_time_msg.data = rewire_time_per_iter;
@@ -1101,7 +1120,7 @@ void ompl::geometric::RTRRTstar::printStateValues(const ompl::base::State *state
 {
   for (int i=0; i<state_dimension_; i++)
   {
-    OMPL_INFORM("State '%d': '%f'", i, state->as<base::RealVectorStateSpace::StateType>()->values[i]);
+    OMPL_INFORM("State['%d']: '%f'", i, state->as<base::RealVectorStateSpace::StateType>()->values[i]);
   }
 }
 
