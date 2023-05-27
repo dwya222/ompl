@@ -66,10 +66,10 @@ namespace ompl
     namespace geometric
     {
         /**
-           @anchor gRTRRTstar
+           @anchor gPRTRRTstar
            @par Short description
-           \ref gRTRRTstar "RRT*" (optimal RRT) is an asymptotically-optimal incremental
-           sampling-based motion planning algorithm. \ref gRTRRTstar "RRT*" algorithm is
+           \ref gPRTRRTstar "RRT*" (optimal RRT) is an asymptotically-optimal incremental
+           sampling-based motion planning algorithm. \ref gPRTRRTstar "RRT*" algorithm is
            guaranteed to converge to an optimal solution, while its
            running time is guaranteed to be a constant factor of the
            running time of the \ref gRRT "RRT". The notion of optimality is with
@@ -84,12 +84,12 @@ namespace ompl
         */
 
         /** \brief Optimal Rapidly-exploring Random Trees */
-        class RTRRTstar : public base::Planner
+        class PRTRRTstar : public base::Planner
         {
         public:
-            RTRRTstar(const base::SpaceInformationPtr &si);
+            PRTRRTstar(const base::SpaceInformationPtr &si);
 
-            ~RTRRTstar() override;
+            ~PRTRRTstar() override;
 
             void getPlannerData(base::PlannerData &data) const override;
 

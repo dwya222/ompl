@@ -34,7 +34,7 @@
 
 /* Authors: Alejandro Perez, Sertac Karaman, Ryan Luna, Luis G. Torres, Ioan Sucan, Javier V Gomez, Jonathan Gammell */
 
-#include "ompl/geometric/planners/rrt/RTRRTstar.h"
+#include "ompl/geometric/planners/rrt/PRTRRTstar.h"
 #include <algorithm>
 #include <boost/math/constants/constants.hpp>
 #include <limits>
@@ -60,65 +60,65 @@
 #include <ros/package.h>
 
 
-ompl::geometric::RTRRTstar::RTRRTstar(const base::SpaceInformationPtr &si)
-  : base::Planner(si, "RTRRTstar")
+ompl::geometric::PRTRRTstar::PRTRRTstar(const base::SpaceInformationPtr &si)
+  : base::Planner(si, "PRTRRTstar")
 {
     specs_.approximateSolutions = true;
     specs_.optimizingPaths = true;
     specs_.canReportIntermediateSolutions = true;
 
-    Planner::declareParam<double>("range", this, &RTRRTstar::setRange, &RTRRTstar::getRange, "0.:1.:10000.");
-    Planner::declareParam<double>("goal_bias", this, &RTRRTstar::setGoalBias, &RTRRTstar::getGoalBias, "0.:.05:1.");
-    Planner::declareParam<double>("rewire_factor", this, &RTRRTstar::setRewireFactor, &RTRRTstar::getRewireFactor,
+    Planner::declareParam<double>("range", this, &PRTRRTstar::setRange, &PRTRRTstar::getRange, "0.:1.:10000.");
+    Planner::declareParam<double>("goal_bias", this, &PRTRRTstar::setGoalBias, &PRTRRTstar::getGoalBias, "0.:.05:1.");
+    Planner::declareParam<double>("rewire_factor", this, &PRTRRTstar::setRewireFactor, &PRTRRTstar::getRewireFactor,
                                   "1.0:0.01:2.0");
-    Planner::declareParam<bool>("use_k_nearest", this, &RTRRTstar::setKNearest, &RTRRTstar::getKNearest, "0,1");
-    Planner::declareParam<bool>("delay_collision_checking", this, &RTRRTstar::setDelayCC, &RTRRTstar::getDelayCC, "0,1");
-    Planner::declareParam<bool>("tree_pruning", this, &RTRRTstar::setTreePruning, &RTRRTstar::getTreePruning, "0,1");
-    Planner::declareParam<double>("prune_threshold", this, &RTRRTstar::setPruneThreshold, &RTRRTstar::getPruneThreshold,
+    Planner::declareParam<bool>("use_k_nearest", this, &PRTRRTstar::setKNearest, &PRTRRTstar::getKNearest, "0,1");
+    Planner::declareParam<bool>("delay_collision_checking", this, &PRTRRTstar::setDelayCC, &PRTRRTstar::getDelayCC, "0,1");
+    Planner::declareParam<bool>("tree_pruning", this, &PRTRRTstar::setTreePruning, &PRTRRTstar::getTreePruning, "0,1");
+    Planner::declareParam<double>("prune_threshold", this, &PRTRRTstar::setPruneThreshold, &PRTRRTstar::getPruneThreshold,
                                   "0.:.01:1.");
-    Planner::declareParam<bool>("pruned_measure", this, &RTRRTstar::setPrunedMeasure, &RTRRTstar::getPrunedMeasure, "0,1");
-    Planner::declareParam<bool>("informed_sampling", this, &RTRRTstar::setInformedSampling, &RTRRTstar::getInformedSampling,
+    Planner::declareParam<bool>("pruned_measure", this, &PRTRRTstar::setPrunedMeasure, &PRTRRTstar::getPrunedMeasure, "0,1");
+    Planner::declareParam<bool>("informed_sampling", this, &PRTRRTstar::setInformedSampling, &PRTRRTstar::getInformedSampling,
                                 "0,1");
-    Planner::declareParam<bool>("sample_rejection", this, &RTRRTstar::setSampleRejection, &RTRRTstar::getSampleRejection,
+    Planner::declareParam<bool>("sample_rejection", this, &PRTRRTstar::setSampleRejection, &PRTRRTstar::getSampleRejection,
                                 "0,1");
-    Planner::declareParam<bool>("new_state_rejection", this, &RTRRTstar::setNewStateRejection,
-                                &RTRRTstar::getNewStateRejection, "0,1");
-    Planner::declareParam<bool>("use_admissible_heuristic", this, &RTRRTstar::setAdmissibleCostToCome,
-                                &RTRRTstar::getAdmissibleCostToCome, "0,1");
-    Planner::declareParam<bool>("ordered_sampling", this, &RTRRTstar::setOrderedSampling, &RTRRTstar::getOrderedSampling,
+    Planner::declareParam<bool>("new_state_rejection", this, &PRTRRTstar::setNewStateRejection,
+                                &PRTRRTstar::getNewStateRejection, "0,1");
+    Planner::declareParam<bool>("use_admissible_heuristic", this, &PRTRRTstar::setAdmissibleCostToCome,
+                                &PRTRRTstar::getAdmissibleCostToCome, "0,1");
+    Planner::declareParam<bool>("ordered_sampling", this, &PRTRRTstar::setOrderedSampling, &PRTRRTstar::getOrderedSampling,
                                 "0,1");
-    Planner::declareParam<unsigned int>("ordering_batch_size", this, &RTRRTstar::setBatchSize, &RTRRTstar::getBatchSize,
+    Planner::declareParam<unsigned int>("ordering_batch_size", this, &PRTRRTstar::setBatchSize, &PRTRRTstar::getBatchSize,
                                         "1:100:1000000");
-    Planner::declareParam<bool>("focus_search", this, &RTRRTstar::setFocusSearch, &RTRRTstar::getFocusSearch, "0,1");
-    Planner::declareParam<unsigned int>("number_sampling_attempts", this, &RTRRTstar::setNumSamplingAttempts,
-                                        &RTRRTstar::getNumSamplingAttempts, "10:10:100000");
-    Planner::declareParam<bool>("check_shortest_path", this, &RTRRTstar::setCheckShortestPath,
-                                &RTRRTstar::getCheckShortestPath, "0,1");
-    Planner::declareParam<bool>("enable_root_rewiring", this, &RTRRTstar::setEnableRootRewiring,
-                                &RTRRTstar::getRootRewiringEnabled, "0,1");
-    Planner::declareParam<unsigned int>("max_neighbors", this, &RTRRTstar::setMaxNeighbors, &RTRRTstar::getMaxNeighbors,
+    Planner::declareParam<bool>("focus_search", this, &PRTRRTstar::setFocusSearch, &PRTRRTstar::getFocusSearch, "0,1");
+    Planner::declareParam<unsigned int>("number_sampling_attempts", this, &PRTRRTstar::setNumSamplingAttempts,
+                                        &PRTRRTstar::getNumSamplingAttempts, "10:10:100000");
+    Planner::declareParam<bool>("check_shortest_path", this, &PRTRRTstar::setCheckShortestPath,
+                                &PRTRRTstar::getCheckShortestPath, "0,1");
+    Planner::declareParam<bool>("enable_root_rewiring", this, &PRTRRTstar::setEnableRootRewiring,
+                                &PRTRRTstar::getRootRewiringEnabled, "0,1");
+    Planner::declareParam<unsigned int>("max_neighbors", this, &PRTRRTstar::setMaxNeighbors, &PRTRRTstar::getMaxNeighbors,
                                         "0:1:1000");
-    Planner::declareParam<double>("nearest_neighbor", this, &RTRRTstar::setNearestNeighborDist,
-                                  &RTRRTstar::getNearestNeighborDist, "0.:.01:10.");
-    Planner::declareParam<bool>("prime_tree", this, &RTRRTstar::setPrimeTree, &RTRRTstar::getPrimeTree, "0,1");
-    Planner::declareParam<double>("prime_tree_secs", this, &RTRRTstar::setPrimeTreeSecs, &RTRRTstar::getPrimeTreeSecs,
+    Planner::declareParam<double>("nearest_neighbor", this, &PRTRRTstar::setNearestNeighborDist,
+                                  &PRTRRTstar::getNearestNeighborDist, "0.:.01:10.");
+    Planner::declareParam<bool>("prime_tree", this, &PRTRRTstar::setPrimeTree, &PRTRRTstar::getPrimeTree, "0,1");
+    Planner::declareParam<double>("prime_tree_secs", this, &PRTRRTstar::setPrimeTreeSecs, &PRTRRTstar::getPrimeTreeSecs,
                                   "0.:.01:30.");
 
     addPlannerProgressProperty("iterations INTEGER", [this] { return numIterationsProperty(); });
     addPlannerProgressProperty("best cost REAL", [this] { return bestCostProperty(); });
 
     // ROS subscriber & publisher setup
-    new_goal_sub_ = nh_.subscribe("/new_planner_goal", 1, &ompl::geometric::RTRRTstar::newGoalCallbackQueue, this);
-    edge_clear_sub_ = nh_.subscribe("/edge_clear", 1, &ompl::geometric::RTRRTstar::edgeClearCallbackQueue, this);
+    new_goal_sub_ = nh_.subscribe("/new_planner_goal", 1, &ompl::geometric::PRTRRTstar::newGoalCallbackQueue, this);
+    edge_clear_sub_ = nh_.subscribe("/edge_clear", 1, &ompl::geometric::PRTRRTstar::edgeClearCallbackQueue, this);
     executing_to_state_sub_ = nh_.subscribe("/executing_to_state", 1,
-                                            &ompl::geometric::RTRRTstar::executingToStateCallbackQueue, this);
+                                            &ompl::geometric::PRTRRTstar::executingToStateCallbackQueue, this);
     current_path_pub_ = nh_.advertise<trajectory_msgs::JointTrajectory>("/current_path", 1);
     rewire_time_pub_ = nh_.advertise<std_msgs::Float64>("/rewire_time", 10);
     solution_iter_pub_ = nh_.advertise<std_msgs::Int64>("/solution_iterations", 1);
     ros::Duration(0.5).sleep(); // Give publishers & subscribers time to connect
 }
 
-ompl::geometric::RTRRTstar::~RTRRTstar()
+ompl::geometric::PRTRRTstar::~PRTRRTstar()
 {
   if (xstate_)
     si_->freeState(xstate_);
@@ -131,7 +131,7 @@ ompl::geometric::RTRRTstar::~RTRRTstar()
   freeMemory();
 }
 
-void ompl::geometric::RTRRTstar::setup()
+void ompl::geometric::PRTRRTstar::setup()
 {
   Planner::setup();
   tools::SelfConfig sc(si_, getName());
@@ -194,7 +194,7 @@ void ompl::geometric::RTRRTstar::setup()
   state_dimension_ = si_->getStateSpace()->getDimension();
 }
 
-void ompl::geometric::RTRRTstar::clear()
+void ompl::geometric::PRTRRTstar::clear()
 {
   setup_ = false;
   Planner::clear();
@@ -213,7 +213,7 @@ void ompl::geometric::RTRRTstar::clear()
   prunedMeasure_ = 0.0;
 }
 
-ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerTerminationCondition &ptc)
+ompl::base::PlannerStatus ompl::geometric::PRTRRTstar::solve(const base::PlannerTerminationCondition &ptc)
 {
     checkValidity();
     goal_ = pdef_->getGoal().get();
@@ -455,27 +455,27 @@ ompl::base::PlannerStatus ompl::geometric::RTRRTstar::solve(const base::PlannerT
     return {newSolution != nullptr, goal_motion_ == nullptr};
 }
 
-void ompl::geometric::RTRRTstar::newGoalCallbackQueue(const std_msgs::Float64MultiArray::ConstPtr& new_goal_msg)
+void ompl::geometric::PRTRRTstar::newGoalCallbackQueue(const std_msgs::Float64MultiArray::ConstPtr& new_goal_msg)
 {
   std::lock_guard<std::mutex> lock(new_goal_mutex_);
   new_goal_msg_ = new_goal_msg;
 }
 
-void ompl::geometric::RTRRTstar::edgeClearCallbackQueue(
+void ompl::geometric::PRTRRTstar::edgeClearCallbackQueue(
     const robo_demo_msgs::JointTrajectoryPointClearStamped::ConstPtr& edge_clear_msg)
 {
   std::lock_guard<std::mutex> lock(edge_clear_mutex_);
   edge_clear_msg_ = edge_clear_msg;
 }
 
-void ompl::geometric::RTRRTstar::executingToStateCallbackQueue(
+void ompl::geometric::PRTRRTstar::executingToStateCallbackQueue(
     const robo_demo_msgs::JointTrajectoryPointStamped::ConstPtr& next_state_msg)
 {
   std::lock_guard<std::mutex> lock(next_state_mutex_);
   next_state_msg_ = next_state_msg;
 }
 
-void ompl::geometric::RTRRTstar::handleCallbacks(bool new_goal_only)
+void ompl::geometric::PRTRRTstar::handleCallbacks(bool new_goal_only)
 {
   {
     std::lock_guard<std::mutex> lock(new_goal_mutex_);
@@ -506,7 +506,7 @@ void ompl::geometric::RTRRTstar::handleCallbacks(bool new_goal_only)
   }
 }
 
-void ompl::geometric::RTRRTstar::newGoalCallbackHandle()
+void ompl::geometric::PRTRRTstar::newGoalCallbackHandle()
 {
   OMPL_WARN("New goal state detected. Changing Planner goal and removing old solutions");
   new_goal_ = true;
@@ -536,7 +536,7 @@ void ompl::geometric::RTRRTstar::newGoalCallbackHandle()
   /* } */
 }
 
-void ompl::geometric::RTRRTstar::edgeClearCallbackHandle()
+void ompl::geometric::PRTRRTstar::edgeClearCallbackHandle()
 {
   OMPL_INFORM("In edgeClearCallbackHandle");
   if (current_path_.empty())
@@ -568,7 +568,7 @@ void ompl::geometric::RTRRTstar::edgeClearCallbackHandle()
   }
 }
 
-void ompl::geometric::RTRRTstar::executingToStateCallbackHandle()
+void ompl::geometric::PRTRRTstar::executingToStateCallbackHandle()
 {
   OMPL_WARN("In executingToStateCallbackHandle");
   control_executing_ = true;
@@ -595,7 +595,7 @@ void ompl::geometric::RTRRTstar::executingToStateCallbackHandle()
   changeRoot(next_motion);
 }
 
-void ompl::geometric::RTRRTstar::publishCurrentPath()
+void ompl::geometric::PRTRRTstar::publishCurrentPath()
 {
   OMPL_INFORM("Publishing current path");
   trajectory_msgs::JointTrajectory path_msg;
@@ -625,7 +625,7 @@ void ompl::geometric::RTRRTstar::publishCurrentPath()
   OMPL_WARN("Published current path. it: '%lu'", iterations_);
 }
 
-void ompl::geometric::RTRRTstar::setShortestPath(base::State *goal_state)
+void ompl::geometric::PRTRRTstar::setShortestPath(base::State *goal_state)
 {
   OMPL_INFORM("Setting shortest path");
   Motion *new_motion;
@@ -656,7 +656,7 @@ void ompl::geometric::RTRRTstar::setShortestPath(base::State *goal_state)
               getName().c_str(), best_cost_.value(), iterations_, nn_->size());
 }
 
-void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
+void ompl::geometric::PRTRRTstar::expandTree(ros::Duration time_to_expand)
 {
   if (time_to_expand != ros::Duration(0.0))
     OMPL_INFORM("Expanding tree for '%f' seconds", time_to_expand.toSec());
@@ -930,7 +930,7 @@ void ompl::geometric::RTRRTstar::expandTree(ros::Duration time_to_expand)
   }
 }
 
-void ompl::geometric::RTRRTstar::checkForSolution()
+void ompl::geometric::PRTRRTstar::checkForSolution()
 {
   // Check if the cost to the goal motion has improved if we have one
   if (goal_motion_ && opt_->isCostBetterThan(goal_motion_->cost, best_cost_))
@@ -941,7 +941,7 @@ void ompl::geometric::RTRRTstar::checkForSolution()
   }
 }
 
-void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
+void ompl::geometric::PRTRRTstar::changeRoot(Motion *new_root)
 {
   // make the previous root a child of this new root
   Motion *prev_root = new_root->parent;
@@ -964,7 +964,7 @@ void ompl::geometric::RTRRTstar::changeRoot(Motion *new_root)
   updateChildCosts(new_root);
 }
 
-void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
+void ompl::geometric::PRTRRTstar::rewireRoot(ros::Duration time_to_rewire)
 {
   if (time_to_rewire != ros::Duration(0.0))
     OMPL_INFORM("Rewiring from root for max '%f' seconds", time_to_rewire.toSec());
@@ -1037,7 +1037,7 @@ void ompl::geometric::RTRRTstar::rewireRoot(ros::Duration time_to_rewire)
   rewire_time_pub_.publish(rewire_time_msg);
 }
 
-void ompl::geometric::RTRRTstar::attemptReroute()
+void ompl::geometric::PRTRRTstar::attemptReroute()
 {
   std::vector<Motion *> nbh;
   std::vector<Motion *> current_path = current_path_;
@@ -1092,13 +1092,13 @@ void ompl::geometric::RTRRTstar::attemptReroute()
   }
 }
 
-inline bool ompl::geometric::RTRRTstar::fileExists(const std::string& name)
+inline bool ompl::geometric::PRTRRTstar::fileExists(const std::string& name)
 {
   struct stat buffer;
   return (stat (name.c_str(), &buffer) == 0);
 }
 
-ompl::geometric::RTRRTstar::Motion* ompl::geometric::RTRRTstar::getNextMotion()
+ompl::geometric::PRTRRTstar::Motion* ompl::geometric::PRTRRTstar::getNextMotion()
 {
   Motion *next_motion = goal_motion_;
   while (next_motion->parent != current_root_)
@@ -1108,7 +1108,7 @@ ompl::geometric::RTRRTstar::Motion* ompl::geometric::RTRRTstar::getNextMotion()
   return next_motion;
 }
 
-void ompl::geometric::RTRRTstar::evalRoot(Motion *goal)
+void ompl::geometric::PRTRRTstar::evalRoot(Motion *goal)
 {
   Motion *root = goal;
   while (root->parent)
@@ -1116,7 +1116,7 @@ void ompl::geometric::RTRRTstar::evalRoot(Motion *goal)
   printStateValues(root->state);
 }
 
-void ompl::geometric::RTRRTstar::printStateValues(const ompl::base::State *state)
+void ompl::geometric::PRTRRTstar::printStateValues(const ompl::base::State *state)
 {
   for (int i=0; i<state_dimension_; i++)
   {
@@ -1124,7 +1124,7 @@ void ompl::geometric::RTRRTstar::printStateValues(const ompl::base::State *state
   }
 }
 
-void ompl::geometric::RTRRTstar::getNeighbors(Motion *motion, std::vector<Motion *> &nbh_, double r) const
+void ompl::geometric::PRTRRTstar::getNeighbors(Motion *motion, std::vector<Motion *> &nbh_, double r) const
 {
   auto cardDbl = static_cast<double>(nn_->size() + 1u);
   if (useKNearest_)
@@ -1145,7 +1145,7 @@ void ompl::geometric::RTRRTstar::getNeighbors(Motion *motion, std::vector<Motion
   }
 }
 
-void ompl::geometric::RTRRTstar::removeFromParent(Motion *m)
+void ompl::geometric::PRTRRTstar::removeFromParent(Motion *m)
 {
   for (auto it = m->parent->children.begin(); it != m->parent->children.end(); ++it)
   {
@@ -1157,7 +1157,7 @@ void ompl::geometric::RTRRTstar::removeFromParent(Motion *m)
   }
 }
 
-void ompl::geometric::RTRRTstar::updateChildCosts(Motion *m)
+void ompl::geometric::PRTRRTstar::updateChildCosts(Motion *m)
 {
   for (std::size_t i = 0; i < m->children.size(); ++i)
   {
@@ -1174,7 +1174,7 @@ void ompl::geometric::RTRRTstar::updateChildCosts(Motion *m)
   }
 }
 
-void ompl::geometric::RTRRTstar::freeMemory()
+void ompl::geometric::PRTRRTstar::freeMemory()
 {
   if (nn_)
   {
@@ -1189,7 +1189,7 @@ void ompl::geometric::RTRRTstar::freeMemory()
   }
 }
 
-void ompl::geometric::RTRRTstar::getPlannerData(base::PlannerData &data) const
+void ompl::geometric::PRTRRTstar::getPlannerData(base::PlannerData &data) const
 {
   Planner::getPlannerData(data);
 
@@ -1209,7 +1209,7 @@ void ompl::geometric::RTRRTstar::getPlannerData(base::PlannerData &data) const
   }
 }
 
-int ompl::geometric::RTRRTstar::pruneTree(const base::Cost &pruneTreeCost)
+int ompl::geometric::PRTRRTstar::pruneTree(const base::Cost &pruneTreeCost)
 {
   // Variable
   // The percent improvement (expressed as a [0,1] fraction) in cost
@@ -1408,7 +1408,7 @@ int ompl::geometric::RTRRTstar::pruneTree(const base::Cost &pruneTreeCost)
   return numPruned;
 }
 
-void ompl::geometric::RTRRTstar::addChildrenToList(std::queue<Motion *, std::deque<Motion *>> *motionList, Motion *motion)
+void ompl::geometric::PRTRRTstar::addChildrenToList(std::queue<Motion *, std::deque<Motion *>> *motionList, Motion *motion)
 {
   for (auto &child : motion->children)
   {
@@ -1416,7 +1416,7 @@ void ompl::geometric::RTRRTstar::addChildrenToList(std::queue<Motion *, std::deq
   }
 }
 
-bool ompl::geometric::RTRRTstar::keepCondition(const Motion *motion, const base::Cost &threshold) const
+bool ompl::geometric::PRTRRTstar::keepCondition(const Motion *motion, const base::Cost &threshold) const
 {
   // We keep if the cost-to-come-heuristic of motion is <= threshold, by checking
   // if !(threshold < heuristic), as if b is not better than a, then a is better than, or equal to, b
@@ -1429,7 +1429,7 @@ bool ompl::geometric::RTRRTstar::keepCondition(const Motion *motion, const base:
   return !opt_->isCostBetterThan(threshold, solutionHeuristic(motion));
 }
 
-ompl::base::Cost ompl::geometric::RTRRTstar::solutionHeuristic(const Motion *motion) const
+ompl::base::Cost ompl::geometric::PRTRRTstar::solutionHeuristic(const Motion *motion) const
 {
   base::Cost costToCome;
   if (useAdmissibleCostToCome_)
@@ -1454,7 +1454,7 @@ ompl::base::Cost ompl::geometric::RTRRTstar::solutionHeuristic(const Motion *mot
   return opt_->combineCosts(costToCome, costToGo);            // add the two costs_
 }
 
-void ompl::geometric::RTRRTstar::setTreePruning(const bool prune)
+void ompl::geometric::PRTRRTstar::setTreePruning(const bool prune)
 {
   if (static_cast<bool>(opt_) == true)
   {
@@ -1474,7 +1474,7 @@ void ompl::geometric::RTRRTstar::setTreePruning(const bool prune)
   useTreePruning_ = prune;
 }
 
-void ompl::geometric::RTRRTstar::setPrunedMeasure(bool informedMeasure)
+void ompl::geometric::PRTRRTstar::setPrunedMeasure(bool informedMeasure)
 {
   if (static_cast<bool>(opt_) == true)
   {
@@ -1517,7 +1517,7 @@ void ompl::geometric::RTRRTstar::setPrunedMeasure(bool informedMeasure)
   }
 }
 
-void ompl::geometric::RTRRTstar::setInformedSampling(bool informedSampling)
+void ompl::geometric::PRTRRTstar::setInformedSampling(bool informedSampling)
 {
   if (static_cast<bool>(opt_) == true)
   {
@@ -1565,7 +1565,7 @@ void ompl::geometric::RTRRTstar::setInformedSampling(bool informedSampling)
   }
 }
 
-void ompl::geometric::RTRRTstar::setSampleRejection(const bool reject)
+void ompl::geometric::PRTRRTstar::setSampleRejection(const bool reject)
 {
   if (static_cast<bool>(opt_) == true)
   {
@@ -1601,7 +1601,7 @@ void ompl::geometric::RTRRTstar::setSampleRejection(const bool reject)
   }
 }
 
-void ompl::geometric::RTRRTstar::setOrderedSampling(bool orderSamples)
+void ompl::geometric::PRTRRTstar::setOrderedSampling(bool orderSamples)
 {
   // Make sure we're using some type of informed sampling
   if (useInformedSampling_ == false && useRejectionSampling_ == false)
@@ -1629,7 +1629,7 @@ void ompl::geometric::RTRRTstar::setOrderedSampling(bool orderSamples)
   }
 }
 
-void ompl::geometric::RTRRTstar::allocSampler()
+void ompl::geometric::PRTRRTstar::allocSampler()
 {
   // Allocate the appropriate type of sampler.
   if (useInformedSampling_)
@@ -1658,7 +1658,7 @@ void ompl::geometric::RTRRTstar::allocSampler()
   // No else
 }
 
-bool ompl::geometric::RTRRTstar::sampleUniform(base::State *statePtr)
+bool ompl::geometric::PRTRRTstar::sampleUniform(base::State *statePtr)
 {
   // Use the appropriate sampler
   if (useInformedSampling_ || useRejectionSampling_)
@@ -1679,7 +1679,7 @@ bool ompl::geometric::RTRRTstar::sampleUniform(base::State *statePtr)
   }
 }
 
-void ompl::geometric::RTRRTstar::calculateRewiringLowerBounds()
+void ompl::geometric::PRTRRTstar::calculateRewiringLowerBounds()
 {
   const auto dimDbl = static_cast<double>(si_->getStateDimension());
 
